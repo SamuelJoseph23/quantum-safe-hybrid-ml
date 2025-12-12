@@ -1,124 +1,164 @@
 """
-Simple PQC-FL simulation:
-- Initializes FederatedServer
-- Creates multiple FederatedClient instances
-- Runs a few federated rounds with dummy numpy parameters
+Real PQC-FL Implementation (Phase 1):
+- Real Data (Adult Income)
+- Real Model (Logistic Regression via SGD)
+- PQC Authentication & Secure Channels active
+- Plaintext Aggregation (HE comes next)
 """
 
 import numpy as np
+from sklearn.linear_model import SGDClassifier
+from sklearn.metrics import accuracy_score
 
 from federated_server import FederatedServer
 from federated_client import FederatedClient
+from data_utils import load_and_preprocess_data
 
-
-def create_dummy_model(num_features: int = 4):
-    """Create a tiny dummy 'model' as a dict of numpy arrays."""
-    return {
-        "W": np.zeros((num_features, 1), dtype=float),
-        "b": np.zeros((1,), dtype=float),
-    }
-
-
-def simulate_local_training(global_params, client_id: str):
+def train_local_model_sklearn(global_weights, global_intercept, X_local, y_local):
     """
-    Fake local training: return slightly perturbed parameters and num_samples.
-    In real code, you would:
-      - load local data
-      - train using global_params
-      - return updated params and sample count
+    Train a local SGDClassifier starting from global parameters.
+    Returns the updated weights and intercept.
     """
-    num_samples = np.random.randint(50, 150)
+    # Initialize model
+    # loss='log_loss' gives Logistic Regression
+    clf = SGDClassifier(loss='log_loss', penalty='l2', alpha=0.0001, 
+                        max_iter=1, tol=None, learning_rate='constant', eta0=0.01,
+                        random_state=42)
+    
+    # We need to call partial_fit to update existing weights.
+    # But first, we must set the coefficients manually.
+    # SGDClassifier expects coef_ to be shape (1, n_features) and intercept_ (1,)
+    
+    # Check if this is the first round (weights are all zeros)
+    # If so, we just fit. If not, we set coefficients.
+    classes = np.array([0, 1])
+    
+    # Warm-start logic:
+    # Since scikit-learn doesn't easily let you set coefs BEFORE first fit,
+    # we do a dummy partial_fit on the first sample to initialize shapes,
+    # then overwrite the weights with global_weights.
+    clf.partial_fit(X_local[0:1], y_local[0:1], classes=classes)
+    
+    clf.coef_ = np.array(global_weights).reshape(1, -1)
+    clf.intercept_ = np.array(global_intercept).reshape(1,)
+    
+    # Now train on the whole local dataset
+    clf.partial_fit(X_local, y_local)
+    
+    return clf.coef_, clf.intercept_
 
-    updated = {}
-    for name, value in global_params.items():
-        noise = np.random.normal(loc=0.0, scale=0.01, size=value.shape)
-        updated[name] = value + noise
-
-    print(f"[Client {client_id}] Local training done (num_samples={num_samples})")
-    return updated, num_samples
-
+def evaluate_global_model(server_weights, server_intercept, X_test, y_test):
+    """
+    Evaluate the global model on the hold-out test set.
+    """
+    # Load into a temp model for prediction
+    clf = SGDClassifier(loss='log_loss', random_state=42)
+    clf.partial_fit(X_test[0:1], y_test[0:1], classes=np.array([0, 1])) # Init
+    
+    clf.coef_ = np.array(server_weights).reshape(1, -1)
+    clf.intercept_ = np.array(server_intercept).reshape(1,)
+    
+    y_pred = clf.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    return acc
 
 def main():
     # ------------------------------------------------------------------
-    # 1. Initialize server and global model
+    # 1. Setup Data
+    # ------------------------------------------------------------------
+    NUM_CLIENTS = 3
+    client_data, test_data = load_and_preprocess_data(NUM_CLIENTS)
+    X_test, y_test = test_data
+    
+    # Determine number of features from data
+    n_features = X_test.shape[1]
+
+    # ------------------------------------------------------------------
+    # 2. Initialize Server and Global Model
     # ------------------------------------------------------------------
     server = FederatedServer(security_level=2)
-    initial_model = create_dummy_model(num_features=4)
+    
+    # Initialize global model (Weights and Bias)
+    # For Logistic Regression: W is (1, n_features), b is (1,)
+    initial_model = {
+        "W": np.zeros((1, n_features), dtype=float),
+        "b": np.zeros((1,), dtype=float),
+    }
     server.set_initial_model(initial_model)
 
     # ------------------------------------------------------------------
-    # 2. Create clients and register them
+    # 3. Create and Register Clients
     # ------------------------------------------------------------------
-    num_clients = 3
     clients = []
     registry_info = {}
 
-    for cid in range(1, num_clients + 1):
-        client_id = f"client{cid}"
+    for cid in range(NUM_CLIENTS):
+        client_id = f"client_{cid+1}"
         client = FederatedClient(client_id=client_id, security_level=2)
         clients.append(client)
 
-        # Register with server
-        registration = client.register_with_server(server_connection=None)
-        # registration contains client_id, public_key, timestamp
-        resp = server.register_client(
-            client_id=registration["client_id"],
-            client_public_key=registration["public_key"],
-        )
-        # resp contains server_kyber_public_key
+        # Register
+        reg_data = client.register_with_server(None)
+        resp = server.register_client(reg_data['client_id'], reg_data['public_key'])
+        
         registry_info[client_id] = {
             "server_kyber_pk": resp["server_kyber_public_key"],
-            "session_key": None,
+            "session_key": None
         }
 
     # ------------------------------------------------------------------
-    # 3. Run a few federated rounds
+    # 4. Federated Training Loop
     # ------------------------------------------------------------------
-    num_rounds = 2
-    for rnd in range(1, num_rounds + 1):
-        print(f"\n========== Federated Round {rnd} ==========")
+    NUM_ROUNDS = 5
+    
+    print(f"\nStarting training for {NUM_ROUNDS} rounds...")
+    
+    for rnd in range(1, NUM_ROUNDS + 1):
+        print(f"\n=== Round {rnd} ===")
         global_params = server.get_global_model()
+        global_W = global_params["W"]
+        global_b = global_params["b"]
 
-        # Each client trains locally and sends an update
-        for client in clients:
+        # --- Client Side ---
+        for i, client in enumerate(clients):
             cid = client.client_id
-            client_global = global_params  # same model for all clients this round
-
-            updated_params, num_samples = simulate_local_training(client_global, cid)
-
-            # Prepare model_update dict to match FederatedClient.train_local_model() output
+            X_local, y_local = client_data[i]
+            
+            # Local Training
+            new_W, new_b = train_local_model_sklearn(global_W, global_b, X_local, y_local)
+            
+            # Prepare Update
+            # In a real scenario, we'd send the *difference* (gradients), 
+            # but sending new weights works for FedAvg too.
             model_update = {
                 "client_id": cid,
-                "encrypted_gradients": updated_params,  # currently plaintext
-                "num_samples": num_samples,
+                "encrypted_gradients": {"W": new_W, "b": new_b}, # Still plaintext here!
+                "num_samples": len(X_local)
             }
-
-            # First time: use server_kyber_pk; then reuse session_key
+            
+            # Secure Send (PQC)
             info = registry_info[cid]
-            server_kyber_pk = info["server_kyber_pk"]
-            session_key = info["session_key"]
-
             payload = client.secure_send_update(
-                model_update=model_update,
-                server_kyber_pk=server_kyber_pk,
-                session_key=session_key,
+                model_update, 
+                info["server_kyber_pk"], 
+                info["session_key"]
             )
-
-            # Store session_key for reuse in next messages
+            
+            # Update session key if it changed/was established
             registry_info[cid]["session_key"] = payload["session_key"]
+            
+            # Server Receive
+            server.receive_update(payload)
 
-            # Server receives and processes the update
-            server_response = server.receive_update(payload)
-            print(f"[Server] Response for {cid}: {server_response}")
+        # --- Server Side ---
+        # Aggregation
+        new_global_params = server.finalize_round()
+        
+        # Evaluation
+        acc = evaluate_global_model(new_global_params["W"], new_global_params["b"], X_test, y_test)
+        print(f"Round {rnd} Global Accuracy: {acc:.4f}")
 
-        # After receiving all updates, finalize the round
-        new_global = server.finalize_round()
-        print("\n[Server] New global model parameters:")
-        for name, value in new_global.items():
-            print(f"  {name}: mean={value.mean():.6f}, std={value.std():.6f}")
-
-    print("\nSimulation complete.")
-
+    print("\nTraining complete.")
 
 if __name__ == "__main__":
     main()
