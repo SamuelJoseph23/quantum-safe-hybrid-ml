@@ -2,13 +2,12 @@ import pickle
 from typing import Dict, Any
 from pqc_auth import PQCAuthenticator
 from pqc_channel import PQCSecureChannel
+from homomorphic_encryption import HEManager
+
 
 class FederatedClient:
     """
-    Federated Learning Client with PQC Security.
-    - Authenticates via CRYSTALS-Dilithium.
-    - Establishes secure channels via CRYSTALS-Kyber.
-    - Encrypts model updates using AES-256 (key derived from Kyber).
+    Federated Learning Client with PQC Security and HE support.
     """
 
     def __init__(self, client_id: str, security_level: int = 2):
@@ -26,6 +25,9 @@ class FederatedClient:
         self.public_key = keys['public_key']
         self.private_key = keys['private_key']
         
+        # HE public key (will be received from server)
+        self.he_public_key = None
+        
         print(f"✓ Client '{client_id}' initialized (Keys generated)")
 
     def register_with_server(self, server_address=None) -> Dict[str, str]:
@@ -36,16 +38,23 @@ class FederatedClient:
             "client_id": self.client_id,
             "public_key": self.public_key
         }
+    
+    def set_he_public_key(self, he_public_key_bytes):
+        """
+        Receive and store HE public key from server.
+        """
+        self.he_public_key = HEManager.deserialize_public_key(he_public_key_bytes)
+        print(f"  [Client {self.client_id}] HE public key received")
 
     def secure_send_update(self, model_update: Dict[str, Any], 
                           server_kyber_pk: str, 
-                          session_key: bytes = None) -> Dict[str, Any]:
+                          session_key: bytes = None,
+                          use_he: bool = True) -> Dict[str, Any]:
         """
         Encrypt and sign the model update.
         
-        1. If no session key, generating one using Kyber Encapsulation.
-        2. Sign the update with Dilithium.
-        3. Encrypt the signed package with AES-GCM (Session Key).
+        Args:
+            use_he: If True, encrypt gradients with Paillier before sending
         """
         
         payload_structure = {}
@@ -59,22 +68,39 @@ class FederatedClient:
             payload_structure['kyber_ciphertext'] = encaps_result['ciphertext']
         else:
             payload_structure['kyber_ciphertext'] = None
+        
+        # Step 1.5: Apply Homomorphic Encryption if enabled
+        if use_he and self.he_public_key:
+            # Create a temporary HE manager for encryption (no private key needed)
+            temp_he = HEManager.__new__(HEManager)
+            temp_he.public_key = self.he_public_key
+            
+            # Encrypt gradients with Paillier
+            encrypted_gradients = {}
+            for param_name, param_value in model_update['encrypted_gradients'].items():
+                encrypted_list = temp_he.encrypt_vector(param_value, self.he_public_key)
+                # Serialize the encrypted list for transmission
+                encrypted_gradients[param_name] = pickle.dumps(encrypted_list)
+            
+            # Replace plaintext gradients with encrypted ones
+            model_update_to_send = {
+                "client_id": model_update["client_id"],
+                "encrypted_gradients": encrypted_gradients,
+                "num_samples": model_update["num_samples"]
+            }
+        else:
+            model_update_to_send = model_update
 
         # Step 2: Sign the Update (Authentication)
-        # We verify integrity of the *plaintext* update before encryption
-        signed_package = self.authenticator.sign_update(model_update, self.private_key)
+        signed_package = self.authenticator.sign_update(model_update_to_send, self.private_key)
         
         # Step 3: Encrypt the Signed Package (Confidentiality)
-        # We serialize the dict to bytes first
         data_bytes = pickle.dumps(signed_package)
-        
         encrypted_data = self.secure_channel.encrypt_message(data_bytes, current_session_key)
         
         # Final Payload
         payload_structure['client_id'] = self.client_id
         payload_structure['encrypted_payload'] = encrypted_data
-        
-        # We return the session key so the main loop can store it for next round
         payload_structure['session_key'] = current_session_key
         
         return payload_structure

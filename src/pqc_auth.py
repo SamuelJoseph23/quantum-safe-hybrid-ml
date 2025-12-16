@@ -7,14 +7,18 @@ from dilithium_py.ml_dsa import ML_DSA_44, ML_DSA_65, ML_DSA_87
 import hashlib
 import json
 import numpy as np
+import base64
 
 class NumpyEncoder(json.JSONEncoder):
     """
-    Helper to convert NumPy arrays to lists for JSON serialization.
+    Helper to convert NumPy arrays and bytes to JSON-serializable formats.
     """
     def default(self, obj):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
+        if isinstance(obj, bytes):
+            # Convert bytes to base64 string for JSON serialization
+            return base64.b64encode(obj).decode('utf-8')
         return super(NumpyEncoder, self).default(obj)
 
 class PQCAuthenticator:
@@ -51,6 +55,7 @@ class PQCAuthenticator:
             dict with signature attached
         """
         # Serialize model update using our custom NumpyEncoder
+        # This handles both numpy arrays AND bytes (for HE ciphertexts)
         update_bytes = json.dumps(model_update, sort_keys=True, cls=NumpyEncoder).encode()
         
         # Convert hex key back to bytes
