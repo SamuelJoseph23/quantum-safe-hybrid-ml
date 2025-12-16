@@ -1,0 +1,171 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Operating System
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Data (large datasets should not be committed)
+data/raw/
+data/processed/
+*.csv
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Model Files (large trained models)
+*.pt
+*.pth
+*.h5
+*.ckpt
+*.safetensors
+results/models/*.npz
+results/models/*.h5
+
+# Logs
+*.log
+logs/
+*.out
+
+# Results (optional - keep structure but not actual files)
+results/metrics/*.json
+results/plots/*.png
+results/plots/*.pdf
+!results/metrics/.gitkeep
+!results/models/.gitkeep
+!results/plots/.gitkeep
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Cache
+.cache/
+*.cache
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Cryptographic Keys (IMPORTANT - never commit real keys!)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+keys/
+secrets/
+
+# Scikit-learn data cache
+scikit_learn_data/
+
+# Tenseal/HE cache
+tenseal_cache/
+
+# Large files (Git LFS should be used for these if needed)
+*.bin
+*.dat
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Compiled extensions
+*.dll
+*.dylib
+
+# Distribution / packaging
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Benchmarking outputs (optional - uncomment if you want to track these)
+# results/metrics/benchmark_results.json
+# results/plots/benchmark_comparison.png

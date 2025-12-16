@@ -1,0 +1,4 @@
+# From project root
+touch results/metrics/.gitkeep
+touch results/models/.gitkeep
+touch results/plots/.gitkeep
