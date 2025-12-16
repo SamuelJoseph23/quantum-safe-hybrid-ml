@@ -1,0 +1,35 @@
+{
+  "timestamp": "2025-12-16T15:18:02.465813",
+  "num_clients": 3,
+  "num_rounds": 5,
+  "security_level": 2,
+  "dataset": "Adult Income",
+  "model": "Logistic Regression (SGD)",
+  "pqc_schemes": {
+    "authentication": "CRYSTALS-Dilithium (ML-DSA-44)",
+    "key_exchange": "CRYSTALS-Kyber (ML-KEM-768)",
+    "encryption": "AES-256-GCM"
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "accuracy": 0.7920398009950249
+    },
+    {
+      "round": 2,
+      "accuracy": 0.793698175787728
+    },
+    {
+      "round": 3,
+      "accuracy": 0.7939192924267551
+    },
+    {
+      "round": 4,
+      "accuracy": 0.7935876174682145
+    },
+    {
+      "round": 5,
+      "accuracy": 0.793698175787728
+    }
+  ]
+}
