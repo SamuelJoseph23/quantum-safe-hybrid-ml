@@ -8,6 +8,7 @@ Real PQC-FL Implementation (Phase 1):
 
 import numpy as np
 import json
+import os
 from datetime import datetime
 from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import accuracy_score
@@ -67,25 +68,34 @@ def evaluate_global_model(server_weights, server_intercept, X_test, y_test):
     return acc
 
 
-def save_results(results, filename='../results/training_results.json'):
-    """Save training results to JSON file"""
-    import os
-    os.makedirs('../results', exist_ok=True)
+def save_results(results, filename='../results/metrics/training_results.json'):
+    """Save training results to JSON file in metrics folder"""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, 'w') as f:
         json.dump(results, f, indent=2)
     print(f"✓ Results saved to {filename}")
 
 
-def plot_results(results, filename='../results/accuracy_plot.png'):
-    """Create accuracy visualization"""
+def save_model(model_params, filename='../results/models/final_model.npz'):
+    """Save final model parameters to models folder"""
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    np.savez(filename, **model_params)
+    print(f"✓ Model saved to {filename}")
+
+
+def plot_results(results, filename='../results/plots/accuracy_plot.png'):
+    """Create accuracy visualization and save to plots folder"""
     try:
         import matplotlib.pyplot as plt
+        
+        # Ensure plots directory exists
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
         
         rounds = [r['round'] for r in results['rounds']]
         accuracies = [r['accuracy'] for r in results['rounds']]
         
         plt.figure(figsize=(10, 6))
-        plt.plot(rounds, accuracies, marker='o', linewidth=2, markersize=8)
+        plt.plot(rounds, accuracies, marker='o', linewidth=2, markersize=8, color='#2E86AB')
         plt.xlabel('Round', fontsize=12)
         plt.ylabel('Global Accuracy', fontsize=12)
         plt.title('Quantum-Safe Federated Learning Performance', fontsize=14, fontweight='bold')
@@ -98,7 +108,7 @@ def plot_results(results, filename='../results/accuracy_plot.png'):
                         xytext=(0,10), ha='center', fontsize=9)
         
         plt.tight_layout()
-        plt.savefig(filename, dpi=300)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"✓ Plot saved to {filename}")
         plt.close()
     except ImportError:
@@ -228,18 +238,32 @@ def main():
     print("Training complete.")
     print("="*70)
     
-    # Save results
+    # ------------------------------------------------------------------
+    # 5. Save All Results
+    # ------------------------------------------------------------------
+    
+    # Save metrics
     save_results(results)
     
-    # Generate plot
+    # Save final model
+    final_model = server.get_global_model()
+    save_model(final_model)
+    
+    # Generate and save plot
     plot_results(results)
     
-    # Print summary
+    # ------------------------------------------------------------------
+    # 6. Print Summary
+    # ------------------------------------------------------------------
     print("\n📊 Summary:")
     print(f"   Initial Accuracy: {results['rounds'][0]['accuracy']:.4f}")
     print(f"   Final Accuracy:   {results['rounds'][-1]['accuracy']:.4f}")
     print(f"   Improvement:      {(results['rounds'][-1]['accuracy'] - results['rounds'][0]['accuracy']):.4f}")
     print(f"   Peak Accuracy:    {max(r['accuracy'] for r in results['rounds']):.4f}")
+    print(f"\n📁 Files saved:")
+    print(f"   - Metrics: results/metrics/training_results.json")
+    print(f"   - Model:   results/models/final_model.npz")
+    print(f"   - Plot:    results/plots/accuracy_plot.png")
 
 
 if __name__ == "__main__":
