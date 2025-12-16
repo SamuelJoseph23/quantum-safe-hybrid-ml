@@ -1,14 +1,16 @@
 {
-  "timestamp": "2025-12-16T15:18:02.465813",
+  "timestamp": "2025-12-16T15:28:25.165447",
   "num_clients": 3,
   "num_rounds": 5,
   "security_level": 2,
   "dataset": "Adult Income",
   "model": "Logistic Regression (SGD)",
+  "homomorphic_encryption": true,
   "pqc_schemes": {
     "authentication": "CRYSTALS-Dilithium (ML-DSA-44)",
     "key_exchange": "CRYSTALS-Kyber (ML-KEM-768)",
-    "encryption": "AES-256-GCM"
+    "encryption": "AES-256-GCM",
+    "homomorphic": "Paillier (phe)"
   },
   "rounds": [
     {
