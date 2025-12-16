@@ -2,6 +2,7 @@
 Post-Quantum Key Exchange using CRYSTALS-Kyber (ML-KEM)
 NIST-standardized quantum-safe KEM
 """
+
 from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
@@ -13,14 +14,13 @@ class PQCSecureChannel:
     def __init__(self, security_level=2):
         """
         Initialize Kyber KEM
-
         Args:
             security_level: 1 (ML-KEM-512), 2 (ML-KEM-768), 3 (ML-KEM-1024)
         """
         self.kem_schemes = {
-            1: ML_KEM_512,   # ~128-bit quantum security
-            2: ML_KEM_768,   # ~192-bit quantum security
-            3: ML_KEM_1024   # ~256-bit quantum security
+            1: ML_KEM_512, # ~128-bit quantum security
+            2: ML_KEM_768, # ~192-bit quantum security
+            3: ML_KEM_1024 # ~256-bit quantum security
         }
         self.kem = self.kem_schemes.get(security_level, ML_KEM_768)
 
@@ -35,21 +35,20 @@ class PQCSecureChannel:
     def client_encapsulate(self, server_public_key_hex):
         """
         Client encapsulates shared secret using server's public key
-
         Args:
             server_public_key_hex: Server's Kyber public key
-
         Returns:
             dict with ciphertext and derived session key
         """
         pk = bytes.fromhex(server_public_key_hex)
-
+        
         # Encapsulate: generates shared secret + ciphertext
-        ciphertext, shared_secret = self.kem.encaps(pk)
-
+        # NOTE: kyber-py returns (shared_secret, ciphertext) order!
+        shared_secret, ciphertext = self.kem.encaps(pk)
+        
         # Derive 256-bit AES key from shared secret
-        session_key = shared_secret[:32]  # Use first 32 bytes for AES-256
-
+        session_key = shared_secret[:32] # Use first 32 bytes for AES-256
+        
         return {
             'ciphertext': ciphertext.hex(),
             'session_key': session_key
@@ -58,28 +57,26 @@ class PQCSecureChannel:
     def server_decapsulate(self, ciphertext_hex, server_private_key_hex):
         """
         Server decapsulates to recover shared secret
-
         Args:
             ciphertext_hex: Ciphertext from client
             server_private_key_hex: Server's private key
-
         Returns:
             bytes: Derived session key (same as client's)
         """
         ciphertext = bytes.fromhex(ciphertext_hex)
         sk = bytes.fromhex(server_private_key_hex)
-
-        # Decapsulate to recover shared secret
-        shared_secret = self.kem.decaps(ciphertext, sk)
-
+        
+        # kyber-py uses decaps(private_key, ciphertext) order!
+        shared_secret = self.kem.decaps(sk, ciphertext)
+        
         # Derive same 256-bit AES key
         session_key = shared_secret[:32]
-
+        
         return session_key
 
     def encrypt_message(self, message_bytes, session_key):
         """Encrypt message with AES-256-GCM using session key"""
-        iv = os.urandom(12)  # 96-bit IV for GCM
+        iv = os.urandom(12) # 96-bit IV for GCM
         cipher = Cipher(
             algorithms.AES(session_key),
             modes.GCM(iv),
@@ -87,7 +84,7 @@ class PQCSecureChannel:
         )
         encryptor = cipher.encryptor()
         ciphertext = encryptor.update(message_bytes) + encryptor.finalize()
-
+        
         return {
             'ciphertext': ciphertext.hex(),
             'iv': iv.hex(),
@@ -99,7 +96,7 @@ class PQCSecureChannel:
         ciphertext = bytes.fromhex(encrypted_data['ciphertext'])
         iv = bytes.fromhex(encrypted_data['iv'])
         tag = bytes.fromhex(encrypted_data['tag'])
-
+        
         cipher = Cipher(
             algorithms.AES(session_key),
             modes.GCM(iv, tag),
@@ -107,5 +104,5 @@ class PQCSecureChannel:
         )
         decryptor = cipher.decryptor()
         plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-
+        
         return plaintext

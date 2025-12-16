@@ -7,12 +7,15 @@ Real PQC-FL Implementation (Phase 1):
 """
 
 import numpy as np
+import json
+from datetime import datetime
 from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import accuracy_score
 
 from federated_server import FederatedServer
 from federated_client import FederatedClient
 from data_utils import load_and_preprocess_data
+
 
 def train_local_model_sklearn(global_weights, global_intercept, X_local, y_local):
     """
@@ -47,6 +50,7 @@ def train_local_model_sklearn(global_weights, global_intercept, X_local, y_local
     
     return clf.coef_, clf.intercept_
 
+
 def evaluate_global_model(server_weights, server_intercept, X_test, y_test):
     """
     Evaluate the global model on the hold-out test set.
@@ -61,6 +65,46 @@ def evaluate_global_model(server_weights, server_intercept, X_test, y_test):
     y_pred = clf.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
     return acc
+
+
+def save_results(results, filename='../results/training_results.json'):
+    """Save training results to JSON file"""
+    import os
+    os.makedirs('../results', exist_ok=True)
+    with open(filename, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"✓ Results saved to {filename}")
+
+
+def plot_results(results, filename='../results/accuracy_plot.png'):
+    """Create accuracy visualization"""
+    try:
+        import matplotlib.pyplot as plt
+        
+        rounds = [r['round'] for r in results['rounds']]
+        accuracies = [r['accuracy'] for r in results['rounds']]
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(rounds, accuracies, marker='o', linewidth=2, markersize=8)
+        plt.xlabel('Round', fontsize=12)
+        plt.ylabel('Global Accuracy', fontsize=12)
+        plt.title('Quantum-Safe Federated Learning Performance', fontsize=14, fontweight='bold')
+        plt.grid(True, alpha=0.3)
+        plt.ylim([min(accuracies) - 0.01, max(accuracies) + 0.01])
+        
+        # Add value labels on points
+        for i, (r, a) in enumerate(zip(rounds, accuracies)):
+            plt.annotate(f'{a:.4f}', (r, a), textcoords="offset points", 
+                        xytext=(0,10), ha='center', fontsize=9)
+        
+        plt.tight_layout()
+        plt.savefig(filename, dpi=300)
+        print(f"✓ Plot saved to {filename}")
+        plt.close()
+    except ImportError:
+        print("⚠ matplotlib not installed. Skipping plot generation.")
+        print("  Install with: pip install matplotlib")
+
 
 def main():
     # ------------------------------------------------------------------
@@ -111,6 +155,22 @@ def main():
     # ------------------------------------------------------------------
     NUM_ROUNDS = 5
     
+    # Initialize results tracking
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "num_clients": NUM_CLIENTS,
+        "num_rounds": NUM_ROUNDS,
+        "security_level": 2,
+        "dataset": "Adult Income",
+        "model": "Logistic Regression (SGD)",
+        "pqc_schemes": {
+            "authentication": "CRYSTALS-Dilithium (ML-DSA-44)",
+            "key_exchange": "CRYSTALS-Kyber (ML-KEM-768)",
+            "encryption": "AES-256-GCM"
+        },
+        "rounds": []
+    }
+    
     print(f"\nStarting training for {NUM_ROUNDS} rounds...")
     
     for rnd in range(1, NUM_ROUNDS + 1):
@@ -157,8 +217,30 @@ def main():
         # Evaluation
         acc = evaluate_global_model(new_global_params["W"], new_global_params["b"], X_test, y_test)
         print(f"Round {rnd} Global Accuracy: {acc:.4f}")
+        
+        # Log results
+        results["rounds"].append({
+            "round": rnd,
+            "accuracy": float(acc)
+        })
 
-    print("\nTraining complete.")
+    print("\n" + "="*70)
+    print("Training complete.")
+    print("="*70)
+    
+    # Save results
+    save_results(results)
+    
+    # Generate plot
+    plot_results(results)
+    
+    # Print summary
+    print("\n📊 Summary:")
+    print(f"   Initial Accuracy: {results['rounds'][0]['accuracy']:.4f}")
+    print(f"   Final Accuracy:   {results['rounds'][-1]['accuracy']:.4f}")
+    print(f"   Improvement:      {(results['rounds'][-1]['accuracy'] - results['rounds'][0]['accuracy']):.4f}")
+    print(f"   Peak Accuracy:    {max(r['accuracy'] for r in results['rounds']):.4f}")
+
 
 if __name__ == "__main__":
     main()
