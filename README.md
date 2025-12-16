@@ -8,13 +8,14 @@ A privacy-preserving federated learning system with post-quantum cryptographic s
 - Paillier Homomorphic Encryption: Privacy-preserving aggregation
 
 ## Installation
-git clone https://github.com/yourusername/quantum-safe-hybrid-ml.git
+```
+git clone https://github.com/SamuelJoseph23/quantum-safe-hybrid-ml.git
 cd quantum-safe-hybrid-ml
 python -m venv venv
 venv\Scripts\activate  # Windows
 source venv/bin/activate  # Mac/Linux
 pip install -r requirements.txt
-
+```
 ## Quick Start
 cd src
 python main.py
@@ -23,6 +24,7 @@ python main.py
 python benchmark.py
 
 ## Project Structure
+```
 quantum-safe-hybrid-ml/
 ├── src/
 │   ├── main.py
@@ -39,7 +41,7 @@ quantum-safe-hybrid-ml/
 │   └── plots/
 ├── requirements.txt
 └── README.md
-
+```
 ## Results
 - Accuracy: ~79.4% on Adult Income test set
 - Training: Converges in 3-5 rounds
@@ -49,6 +51,3 @@ quantum-safe-hybrid-ml/
 - Post-Quantum Cryptography: Protected against quantum attacks
 - Homomorphic Encryption: Server aggregates without seeing plaintext
 - Federated Learning: Local data remains on devices
-
-## License
-MIT License
