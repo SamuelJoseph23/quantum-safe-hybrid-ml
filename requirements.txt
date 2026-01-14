@@ -1,0 +1,21 @@
+# Core Dependencies
+numpy>=1.24.0
+scikit-learn>=1.3.0
+pandas>=2.0.0
+
+# Post-Quantum Cryptography
+dilithium-py>=1.1.0
+kyber-py>=0.1.0
+cryptography>=41.0.0
+
+# Homomorphic Encryption
+phe>=1.5.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Optional
+scipy>=1.11.0
+
+# Dev / Tests
+pytest>=7.4.0

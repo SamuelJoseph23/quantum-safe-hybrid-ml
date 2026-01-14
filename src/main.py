@@ -192,6 +192,8 @@ def main():
                 final_b = client.apply_differential_privacy(
                     new_b, global_b, DP_CONFIG["clipping_norm"]
                 )
+                # Account once per update (not per tensor)
+                client.account_privacy_step()
                 
                 # Track privacy spent (just from one client as representative)
                 if i == 0:
@@ -202,17 +204,20 @@ def main():
             # 3. Prepare Update
             model_update = {
                 "client_id": cid,
-                "encrypted_gradients": {"W": final_W, "b": final_b},
+                "model_params": {"W": final_W, "b": final_b},
                 "num_samples": len(X_local)
             }
             
             # 4. Secure Send
             info = registry_info[cid]
+            info.setdefault("counter", 0)
+            info["counter"] += 1
             payload = client.secure_send_update(
                 model_update, 
                 info["server_kyber_pk"], 
                 info["session_key"],
-                use_he=USE_HE
+                use_he=USE_HE,
+                msg_counter=info["counter"],
             )
             registry_info[cid]["session_key"] = payload["session_key"]
             server.receive_update(payload)

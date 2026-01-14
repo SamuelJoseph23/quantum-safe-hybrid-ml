@@ -51,8 +51,8 @@ def measure_payload_size(payload):
     """
     Measure the size of a payload in bytes.
     """
-    import pickle
-    return len(pickle.dumps(payload))
+    import json
+    return len(json.dumps(payload, sort_keys=True, default=str).encode("utf-8"))
 
 
 def run_experiment(use_he, num_clients=3, num_rounds=5):
@@ -143,19 +143,22 @@ def run_experiment(use_he, num_clients=3, num_rounds=5):
             # Prepare Update
             model_update = {
                 "client_id": cid,
-                "encrypted_gradients": {"W": new_W, "b": new_b},
+                "model_params": {"W": new_W, "b": new_b},
                 "num_samples": len(X_local)
             }
             
             # Secure Send (measure time and size)
             info = registry_info[cid]
+            info.setdefault("counter", 0)
+            info["counter"] += 1
             
             encrypt_start = time.time()
             payload = client.secure_send_update(
                 model_update, 
                 info["server_kyber_pk"], 
                 info["session_key"],
-                use_he=use_he
+                use_he=use_he,
+                msg_counter=info["counter"],
             )
             encrypt_time = time.time() - encrypt_start
             round_encryption_time += encrypt_time

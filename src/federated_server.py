@@ -1,4 +1,3 @@
-import pickle
 from typing import Dict, Any
 import numpy as np
 
@@ -59,6 +58,7 @@ class FederatedServer:
         self.clients[client_id] = {
             "dilithium_pk": client_public_key,
             "session_key": None,
+            "last_counter": -1,
         }
         
         print(f"✓ Registered client '{client_id}'")
@@ -82,6 +82,9 @@ class FederatedServer:
             return {"status": "error", "reason": "unregistered_client"}
         
         client_meta = self.clients[client_id]
+        msg_counter = int(payload.get("counter", -1))
+        if msg_counter <= client_meta.get("last_counter", -1):
+            return {"status": "error", "reason": "replay_detected"}
         
         # 1) Establish/retrieve session key
         kyber_ciphertext = payload.get("kyber_ciphertext")
@@ -99,14 +102,15 @@ class FederatedServer:
         # 2) Decrypt the signed update with AES-GCM
         encrypted_payload = payload.get("encrypted_payload")
         try:
-            signed_bytes = self.secure_channel.decrypt_message(
-                encrypted_payload, session_key
+            signed_update = self.secure_channel.decrypt_json(
+                encrypted_payload,
+                session_key=session_key,
+                aad={"client_id": client_id, "counter": msg_counter, "type": "model_update"},
             )
         except Exception as e:
             print(f"✗ Decryption failed for client '{client_id}': {e}")
             return {"status": "error", "reason": "decryption_failed"}
-        
-        signed_update = pickle.loads(signed_bytes)
+        client_meta["last_counter"] = msg_counter
         
         # 3) Verify Dilithium signature
         public_key_hex = client_meta["dilithium_pk"]
@@ -118,17 +122,17 @@ class FederatedServer:
         
         # 4) Extract model update
         model_update = signed_update["model_update"]
-        client_update = model_update.get("encrypted_gradients")
+        client_update = model_update.get("model_params")
         num_samples = model_update.get("num_samples", 0)
         
         # 5) Process based on HE mode
         if self.use_he:
-            # HE Mode: client_update contains encrypted values (pickled)
-            # Deserialize the encrypted values
+            # HE Mode: client_update contains JSON-safe encrypted vectors
             deserialized_update = {}
-            for param_name, encrypted_bytes in client_update.items():
-                deserialized_update[param_name] = pickle.loads(encrypted_bytes)
-            
+            for param_name, encrypted_payload_list in client_update.items():
+                deserialized_update[param_name] = self.he_manager.deserialize_encrypted_vector(
+                    self.he_manager.public_key, encrypted_payload_list
+                )
             self.he_aggregator.add_client_update(deserialized_update, num_samples)
         else:
             # Plaintext Mode: client_update contains raw arrays

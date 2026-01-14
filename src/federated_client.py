@@ -1,4 +1,3 @@
-import pickle
 import numpy as np
 from typing import Dict, Any, Union
 from pqc_auth import PQCAuthenticator
@@ -81,15 +80,26 @@ class FederatedClient:
             
         # 3. Add Noise using the DP Engine
         # The engine handles the noise generation based on epsilon
-        noisy_delta = self.dp_engine.add_noise(delta)
+        # Tie DP sensitivity to clipping bound and avoid double-accounting:
+        # - We add noise to multiple tensors (W and b), but account once per "client update".
+        self.dp_engine.set_sensitivity(clipping_norm)
+        noisy_delta = self.dp_engine.add_noise(delta, account=False)
         
         # 4. Return differentially private weights
         return global_weights + noisy_delta
 
-    def secure_send_update(self, model_update: Dict[str, Any], 
-                          server_kyber_pk: str, 
+    def account_privacy_step(self) -> None:
+        """
+        Account for one DP mechanism application per client update.
+        """
+        if self.use_dp:
+            self.dp_engine.account_step()
+
+    def secure_send_update(self, model_update: Dict[str, Any],
+                          server_kyber_pk: str,
                           session_key: bytes = None,
-                          use_he: bool = True) -> Dict[str, Any]:
+                          use_he: bool = True,
+                          msg_counter: int = 0) -> Dict[str, Any]:
         """
         Encrypt and sign the model update.
         
@@ -116,8 +126,8 @@ class FederatedClient:
             temp_he.public_key = self.he_public_key
             
             # Encrypt gradients with Paillier
-            encrypted_gradients = {}
-            for param_name, param_value in model_update['encrypted_gradients'].items():
+            encrypted_params = {}
+            for param_name, param_value in model_update['model_params'].items():
                 
                 # --- FIX: Ensure input is always a NumPy array ---
                 if isinstance(param_value, np.ndarray):
@@ -127,13 +137,13 @@ class FederatedClient:
                 # -----------------------------------------------
                     
                 encrypted_list = temp_he.encrypt_vector(vec, self.he_public_key)
-                # Serialize the encrypted list for transmission
-                encrypted_gradients[param_name] = pickle.dumps(encrypted_list)
+                # Serialize encrypted vector to JSON-safe payload
+                encrypted_params[param_name] = temp_he.serialize_encrypted_vector(encrypted_list)
             
             # Replace plaintext gradients with encrypted ones
             model_update_to_send = {
                 "client_id": model_update["client_id"],
-                "encrypted_gradients": encrypted_gradients,
+                "model_params": encrypted_params,
                 "num_samples": model_update["num_samples"]
             }
         else:
@@ -143,11 +153,15 @@ class FederatedClient:
         signed_package = self.authenticator.sign_update(model_update_to_send, self.private_key)
         
         # Step 3: Encrypt the Signed Package (Confidentiality)
-        data_bytes = pickle.dumps(signed_package)
-        encrypted_data = self.secure_channel.encrypt_message(data_bytes, current_session_key)
+        encrypted_data = self.secure_channel.encrypt_json(
+            signed_package,
+            session_key=current_session_key,
+            aad={"client_id": self.client_id, "counter": int(msg_counter), "type": "model_update"},
+        )
         
         # Final Payload
         payload_structure['client_id'] = self.client_id
+        payload_structure['counter'] = int(msg_counter)
         payload_structure['encrypted_payload'] = encrypted_data
         payload_structure['session_key'] = current_session_key
         

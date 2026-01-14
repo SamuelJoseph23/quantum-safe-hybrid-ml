@@ -16,8 +16,8 @@ class DifferentialPrivacy:
     Based on: Dwork et al., "Differential Privacy: A Survey of Results"
     """
     
-    def __init__(self, epsilon: float = 1.0, delta: float = 1e-5, 
-                 sensitivity: float = 2.0, noise_type: str = 'laplace'):
+    def __init__(self, epsilon: float = 1.0, delta: float = 1e-5,
+                 sensitivity: float = 1.0, noise_type: str = 'gaussian'):
         """
         Initialize DP mechanism.
         
@@ -70,7 +70,21 @@ class DifferentialPrivacy:
         else:
             raise ValueError(f"Unknown noise type: {self.noise_type}")
     
-    def add_noise(self, gradient: np.ndarray) -> np.ndarray:
+    def set_sensitivity(self, sensitivity: float) -> None:
+        """
+        Update sensitivity (typically tied to clipping norm) and recompute scale.
+        """
+        self.sensitivity = float(sensitivity)
+        self.scale = self._calculate_scale()
+
+    def account_step(self, epsilon_spent: float | None = None) -> None:
+        """
+        Account for one privacy mechanism application.
+        """
+        self.privacy_spent += float(self.epsilon if epsilon_spent is None else epsilon_spent)
+        self.rounds_executed += 1
+
+    def add_noise(self, gradient: np.ndarray, *, account: bool = False) -> np.ndarray:
         """
         Add differential privacy noise to gradient.
         
@@ -88,13 +102,9 @@ class DifferentialPrivacy:
             # Gaussian distribution: N(0, scale^2)
             noise = np.random.normal(0, self.scale, size=gradient.shape)
         
-        # Add noise to gradient
         noisy_gradient = gradient + noise
-        
-        # Update privacy budget (add epsilon spent in this round)
-        self.privacy_spent += self.epsilon
-        self.rounds_executed += 1
-        
+        if account:
+            self.account_step()
         return noisy_gradient
     
     def add_noise_to_dict(self, gradient_dict: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:

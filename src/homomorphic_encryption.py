@@ -5,7 +5,7 @@ Enables privacy-preserving aggregation on encrypted data
 
 from phe import paillier
 import numpy as np
-import pickle
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 class HEManager:
@@ -35,14 +35,19 @@ class HEManager:
         """
         Serialize public key for transmission to clients.
         """
-        return pickle.dumps(self.public_key)
+        # NOTE: Do NOT use pickle for anything that could be "network-facing".
+        # Paillier public key is fully described by modulus n.
+        return {"n": str(self.public_key.n)}
     
     @staticmethod
     def deserialize_public_key(key_bytes):
         """
         Deserialize public key received from server.
         """
-        return pickle.loads(key_bytes)
+        if isinstance(key_bytes, (bytes, bytearray)):
+            raise TypeError("Expected dict-like public key payload, got bytes.")
+        n = int(key_bytes["n"])
+        return paillier.PaillierPublicKey(n)
     
     def encrypt_vector(self, vector, public_key=None):
         """
@@ -84,6 +89,30 @@ class HEManager:
         decrypted_array = np.array(decrypted).reshape(original_shape)
         
         return decrypted_array
+
+    @staticmethod
+    def serialize_encrypted_number(enc_num: Any) -> Dict[str, Any]:
+        """
+        Serialize a phe Paillier EncryptedNumber into a JSON-safe dict.
+        """
+        # phe EncryptedNumber exposes `ciphertext()` and `exponent`
+        return {"ciphertext": str(enc_num.ciphertext()), "exponent": int(enc_num.exponent)}
+
+    @staticmethod
+    def deserialize_encrypted_number(public_key: Any, payload: Dict[str, Any]) -> Any:
+        """
+        Reconstruct a phe Paillier EncryptedNumber from JSON-safe dict.
+        """
+        ciphertext = int(payload["ciphertext"])
+        exponent = int(payload["exponent"])
+        # phe supports constructing EncryptedNumber via paillier.EncryptedNumber(public_key, ciphertext, exponent)
+        return paillier.EncryptedNumber(public_key, ciphertext, exponent)
+
+    def serialize_encrypted_vector(self, encrypted_list: Sequence[Any]) -> List[Dict[str, Any]]:
+        return [self.serialize_encrypted_number(x) for x in encrypted_list]
+
+    def deserialize_encrypted_vector(self, public_key: Any, payload_list: Sequence[Dict[str, Any]]) -> List[Any]:
+        return [self.deserialize_encrypted_number(public_key, p) for p in payload_list]
     
     def add_encrypted_vectors(self, encrypted_lists):
         """
@@ -168,10 +197,13 @@ class HEAggregator:
             # Calculate total weight
             total_weight = sum(u['weight'] for u in updates)
             
-            # Weighted encryption: multiply each by its normalized weight
+            # Weighted aggregation (integer weights):
+            # - Multiply ciphertexts by num_samples (integer) homomorphically
+            # - Sum all ciphertext vectors
+            # - Decrypt and divide by total_weight in plaintext
             weighted_encrypted = []
             for update in updates:
-                weight_factor = update['weight'] / total_weight
+                weight_factor = int(update['weight'])
                 weighted = self.he_manager.multiply_encrypted_by_scalar(
                     update['encrypted'], 
                     weight_factor
@@ -186,8 +218,7 @@ class HEAggregator:
                 aggregated_encrypted, 
                 param_shapes[param_name]
             )
-            
-            aggregated_params[param_name] = decrypted
+            aggregated_params[param_name] = decrypted / float(total_weight)
         
         # Clear buffer
         self.encrypted_updates = {}

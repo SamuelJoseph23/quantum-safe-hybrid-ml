@@ -4,9 +4,12 @@ NIST-standardized quantum-safe KEM
 """
 
 from kyber_py.ml_kem import ML_KEM_512, ML_KEM_768, ML_KEM_1024
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
 import os
+import json
+from typing import Any, Dict, Optional
 
 class PQCSecureChannel:
     """Establishes quantum-safe communication channels with Kyber"""
@@ -23,6 +26,15 @@ class PQCSecureChannel:
             3: ML_KEM_1024 # ~256-bit quantum security
         }
         self.kem = self.kem_schemes.get(security_level, ML_KEM_768)
+
+    @staticmethod
+    def _hkdf_derive(shared_secret: bytes, salt: bytes, info: bytes, length: int = 32) -> bytes:
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=length,
+            salt=salt,
+            info=info,
+        ).derive(shared_secret)
 
     def server_generate_keypair(self):
         """Server generates Kyber KEM keypair"""
@@ -45,9 +57,13 @@ class PQCSecureChannel:
         # Encapsulate: generates shared secret + ciphertext
         # NOTE: kyber-py returns (shared_secret, ciphertext) order!
         shared_secret, ciphertext = self.kem.encaps(pk)
-        
-        # Derive 256-bit AES key from shared secret
-        session_key = shared_secret[:32] # Use first 32 bytes for AES-256
+
+        # Derive 256-bit AES key from shared secret via HKDF
+        # Salt binds derivation to this handshake ciphertext; info provides protocol context.
+        salt = hashes.Hash(hashes.SHA256())
+        salt.update(ciphertext)
+        salt_bytes = salt.finalize()
+        session_key = self._hkdf_derive(shared_secret, salt=salt_bytes, info=b"pqc-fl/aesgcm/v1", length=32)
         
         return {
             'ciphertext': ciphertext.hex(),
@@ -68,41 +84,38 @@ class PQCSecureChannel:
         
         # kyber-py uses decaps(private_key, ciphertext) order!
         shared_secret = self.kem.decaps(sk, ciphertext)
-        
-        # Derive same 256-bit AES key
-        session_key = shared_secret[:32]
+
+        salt = hashes.Hash(hashes.SHA256())
+        salt.update(ciphertext)
+        salt_bytes = salt.finalize()
+        session_key = self._hkdf_derive(shared_secret, salt=salt_bytes, info=b"pqc-fl/aesgcm/v1", length=32)
         
         return session_key
 
-    def encrypt_message(self, message_bytes, session_key):
-        """Encrypt message with AES-256-GCM using session key"""
-        iv = os.urandom(12) # 96-bit IV for GCM
-        cipher = Cipher(
-            algorithms.AES(session_key),
-            modes.GCM(iv),
-            backend=default_backend()
-        )
-        encryptor = cipher.encryptor()
-        ciphertext = encryptor.update(message_bytes) + encryptor.finalize()
-        
-        return {
-            'ciphertext': ciphertext.hex(),
-            'iv': iv.hex(),
-            'tag': encryptor.tag.hex()
-        }
+    def encrypt_message(self, message_bytes: bytes, session_key: bytes, aad: Optional[bytes] = None) -> Dict[str, str]:
+        """Encrypt bytes with AES-256-GCM using session key (supports AAD)."""
+        nonce = os.urandom(12)  # 96-bit nonce for GCM
+        aesgcm = AESGCM(session_key)
+        ct = aesgcm.encrypt(nonce, message_bytes, aad)
+        return {"ciphertext": ct.hex(), "nonce": nonce.hex()}
 
-    def decrypt_message(self, encrypted_data, session_key):
-        """Decrypt message with AES-256-GCM"""
-        ciphertext = bytes.fromhex(encrypted_data['ciphertext'])
-        iv = bytes.fromhex(encrypted_data['iv'])
-        tag = bytes.fromhex(encrypted_data['tag'])
-        
-        cipher = Cipher(
-            algorithms.AES(session_key),
-            modes.GCM(iv, tag),
-            backend=default_backend()
-        )
-        decryptor = cipher.decryptor()
-        plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-        
-        return plaintext
+    def decrypt_message(self, encrypted_data: Dict[str, str], session_key: bytes, aad: Optional[bytes] = None) -> bytes:
+        """Decrypt bytes with AES-256-GCM (supports AAD)."""
+        ct = bytes.fromhex(encrypted_data["ciphertext"])
+        nonce = bytes.fromhex(encrypted_data["nonce"])
+        aesgcm = AESGCM(session_key)
+        return aesgcm.decrypt(nonce, ct, aad)
+
+    @staticmethod
+    def _aad_bytes(aad: Optional[Dict[str, Any]]) -> Optional[bytes]:
+        if aad is None:
+            return None
+        return json.dumps(aad, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def encrypt_json(self, payload: Dict[str, Any], session_key: bytes, aad: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        msg = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return self.encrypt_message(msg, session_key=session_key, aad=self._aad_bytes(aad))
+
+    def decrypt_json(self, encrypted_data: Dict[str, str], session_key: bytes, aad: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        msg = self.decrypt_message(encrypted_data, session_key=session_key, aad=self._aad_bytes(aad))
+        return json.loads(msg.decode("utf-8"))

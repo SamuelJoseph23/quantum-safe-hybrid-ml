@@ -7,7 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.datasets import fetch_openml
 
-def load_and_preprocess_data(n_clients: int):
+def load_and_preprocess_data(n_clients: int, split_strategy: str = "iid", non_iid_label_skew: bool = False):
     """
     Loads the Adult Income dataset, preprocesses it, and splits it for federated clients.
     
@@ -38,24 +38,32 @@ def load_and_preprocess_data(n_clients: int):
     numeric_features = ['age', 'capital-gain', 'capital-loss', 'hours-per-week']
     X = X[numeric_features]
 
-    # 4. Scale features
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X)
+    # Split into train and test FIRST (avoid preprocessing leakage)
+    X_train_df, X_test_df, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-    # Split into train and test
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # 4. Scale features (fit on train only)
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train_df)
+    X_test = scaler.transform(X_test_df)
 
     # Split training data among clients
     # We'll do a simple IID split (random shuffle is implicit in train_test_split)
     client_datasets = []
     chunk_size = len(X_train) // n_clients
+    indices = np.arange(len(X_train))
+
+    # Optional simple non-IID label skew for demo purposes:
+    # sort by label and split contiguous blocks, producing label-imbalanced clients.
+    if non_iid_label_skew or split_strategy.lower() in ("non-iid", "noniid", "label_skew"):
+        indices = indices[np.argsort(np.array(y_train))]
     
     for i in range(n_clients):
         start = i * chunk_size
         end = (i + 1) * chunk_size
-        X_c = X_train[start:end]
-        y_c = y_train[start:end]
-        client_datasets.append((X_c, y_c.values)) # Convert y to numpy array
+        idx = indices[start:end]
+        X_c = X_train[idx]
+        y_c = np.array(y_train)[idx]
+        client_datasets.append((X_c, y_c)) # y already numpy
 
     print(f"Data loaded. {n_clients} clients, {chunk_size} samples per client.")
     return client_datasets, (X_test, y_test)
