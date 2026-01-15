@@ -26,39 +26,59 @@ def load_and_preprocess_data(n_clients: int, split_strategy: str = "iid", non_ii
     print("Loading Adult Income dataset...")
     try:
         # Fetch dataset from OpenML (ID 1590 is the adult dataset)
-        # as_frame=True returns pandas DataFrame
         adult = fetch_openml(data_id=1590, as_frame=True, parser='auto')
         X = adult.data
         y = adult.target
     except Exception as e:
         raise RuntimeError(f"Failed to load dataset from OpenML: {e}") from e
 
-    # Simple preprocessing
-    # 1. Drop rows with missing values
-    X = X.dropna()
-    y = y[X.index]
+    # 1. Handle missing values - important to do before encoding
+    # Some categorical columns might have '?' or NaN
+    X = X.replace('?', np.nan)
+    # Simple strategy: drop rows with NaNs for this demo
+    clean_mask = X.notna().all(axis=1)
+    X = X[clean_mask]
+    y = y[clean_mask]
 
     # 2. Encode target labels (<=50K -> 0, >50K -> 1)
-    # The dataset typically has strings like '<=50K', '>50K'
+    # The dataset typically has strings like '<=50K', '>50K', '<=50K.', '>50K.'
+    y = y.astype(str).str.replace('.', '', regex=False).str.strip()
     y = (y == '>50K').astype(int)
 
-    # 3. Select a subset of features for simplicity in this demo
-    # We'll pick a mix of numerical and categorical features
-    # For a real run, you'd likely One-Hot Encode categorical ones.
-    # Here, we keep it simple: just numerical for the logistic regression baseline.
-    numeric_features = ['age', 'capital-gain', 'capital-loss', 'hours-per-week']
-    X = X[numeric_features]
+    # 3. Feature Selection & Encoding
+    # We'll use a mix of numerical and categorical features
+    # Standard names for Adult dataset from OpenML 1590
+    potential_numeric = ['age', 'capital-gain', 'capital-loss', 'hours-per-week', 'educational-num', 'education-num']
+    potential_categorical = ['workclass', 'education', 'marital-status', 'occupation', 'relationship', 'race', 'gender']
+    
+    # Filter only existing columns
+    numeric_features = [f for f in potential_numeric if f in X.columns]
+    categorical_features = [f for f in potential_categorical if f in X.columns]
+    
+    print(f"Using numeric features: {numeric_features}")
+    print(f"Using categorical features: {categorical_features}")
+
+    X_num = X[numeric_features].astype(float)
+    X_cat = X[categorical_features].astype(str)
+    
+    # One-Hot Encoding for categorical features
+    X_cat_encoded = pd.get_dummies(X_cat, drop_first=True)
+    
+    # Combine back
+    X_processed = pd.concat([X_num, X_cat_encoded], axis=1)
 
     # Split into train and test FIRST (avoid preprocessing leakage)
-    X_train_df, X_test_df, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    X_train_df, X_test_df, y_train, y_test = train_test_split(
+        X_processed, y, test_size=0.2, random_state=42, stratify=y
+    )
 
-    # 4. Scale features (fit on train only)
+    # 4. Scale all features (fit on train only)
+    # Even OHE features benefit from scaling in SGD if regularization is used
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train_df)
     X_test = scaler.transform(X_test_df)
 
     # Split training data among clients
-    # We'll do a simple IID split (random shuffle is implicit in train_test_split)
     client_datasets = []
     chunk_size = len(X_train) // n_clients
     
@@ -67,8 +87,6 @@ def load_and_preprocess_data(n_clients: int, split_strategy: str = "iid", non_ii
     
     indices = np.arange(len(X_train))
 
-    # Optional simple non-IID label skew for demo purposes:
-    # sort by label and split contiguous blocks, producing label-imbalanced clients.
     if non_iid_label_skew or split_strategy.lower() in ("non-iid", "noniid", "label_skew"):
         indices = indices[np.argsort(np.array(y_train))]
     
@@ -78,10 +96,11 @@ def load_and_preprocess_data(n_clients: int, split_strategy: str = "iid", non_ii
         idx = indices[start:end]
         X_c = X_train[idx]
         y_c = np.array(y_train)[idx]
-        client_datasets.append((X_c, y_c)) # y already numpy
+        client_datasets.append((X_c, y_c))
 
     print(f"Data loaded. {n_clients} clients, ~{chunk_size} samples per client.")
     print(f"Total training samples: {len(X_train)}, Test samples: {len(X_test)}")
+    print(f"Number of features: {X_train.shape[1]}")
     return client_datasets, (X_test, y_test)
 
 if __name__ == "__main__":

@@ -25,8 +25,8 @@ RESULTS_DIR = PROJECT_ROOT / "results"
 # --- Differential Privacy Configuration ---
 DP_CONFIG = {
     "enabled": True,
-    "epsilon": 2.0,          # Privacy Budget (Lower = More Private)
-    "clipping_norm": 1.5     # Max L2 norm of update
+    "epsilon": 10.0,          # Privacy Budget (Lower = More Private)
+    "clipping_norm": 2.0     # Max L2 norm of update
 }
 
 def train_local_model_sklearn(global_weights, global_intercept, X_local, y_local):
@@ -180,7 +180,7 @@ def main():
     # ------------------------------------------------------------------
     # 4. Federated Training Loop
     # ------------------------------------------------------------------
-    NUM_ROUNDS = 5
+    NUM_ROUNDS = 10
     
     results = {
         "timestamp": datetime.now().isoformat(),
