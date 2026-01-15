@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import numpy as np
 
 from pqc_auth import PQCAuthenticator
@@ -37,19 +37,19 @@ class FederatedServer:
             self.he_manager = HEManager(key_size=2048)
             self.he_aggregator = HEAggregator(self.he_manager)
             self.public_he_key_bytes = self.he_manager.serialize_public_key()
-            print("✓ Homomorphic Encryption (Paillier) enabled")
+            print("[OK] Homomorphic Encryption (Paillier) enabled")
         else:
             self.he_manager = None
             self.he_aggregator = None
             self.public_he_key_bytes = None
-            print("✓ Homomorphic Encryption disabled (plaintext aggregation)")
+            print("[OK] Homomorphic Encryption disabled (plaintext aggregation)")
         
         # State
         self.clients: Dict[str, Dict[str, Any]] = {}
         self.global_model: Dict[str, np.ndarray] = {}
         self.param_shapes: Dict[str, tuple] = {}
         
-        print(f"✓ FederatedServer initialized with PQC (Dilithium + Kyber)")
+        print(f"[OK] FederatedServer initialized with PQC (Dilithium + Kyber)")
 
     def register_client(self, client_id: str, client_public_key: str) -> Dict[str, Any]:
         """
@@ -61,7 +61,7 @@ class FederatedServer:
             "last_counter": -1,
         }
         
-        print(f"✓ Registered client '{client_id}'")
+        print(f"[OK] Registered client '{client_id}'")
         
         response = {
             "server_kyber_public_key": self.kyber_public_key,
@@ -93,7 +93,7 @@ class FederatedServer:
                 kyber_ciphertext, self.kyber_private_key
             )
             client_meta["session_key"] = session_key
-            print(f"✓ Session key established for client '{client_id}'")
+            print(f"[OK] Session key established for client '{client_id}'")
         else:
             session_key = client_meta.get("session_key")
             if session_key is None:
@@ -108,7 +108,7 @@ class FederatedServer:
                 aad={"client_id": client_id, "counter": msg_counter, "type": "model_update"},
             )
         except Exception as e:
-            print(f"✗ Decryption failed for client '{client_id}': {e}")
+            print(f"[ERROR] Decryption failed for client '{client_id}': {e}")
             return {"status": "error", "reason": "decryption_failed"}
         client_meta["last_counter"] = msg_counter
         
@@ -117,7 +117,7 @@ class FederatedServer:
         is_valid = self.authenticator.verify_signature(signed_update, public_key_hex)
         
         if not is_valid:
-            print(f"✗ Invalid signature from client '{client_id}'")
+            print(f"[ERROR] Invalid signature from client '{client_id}'")
             return {"status": "error", "reason": "invalid_signature"}
         
         # 4) Extract model update
@@ -138,7 +138,7 @@ class FederatedServer:
             # Plaintext Mode: client_update contains raw arrays
             self._apply_aggregation(client_update, num_samples)
         
-        print(f"✓ Processed update from client '{client_id}' (num_samples={num_samples})")
+        print(f"[OK] Processed update from client '{client_id}' (num_samples={num_samples})")
         
         return {"status": "ok"}
 
@@ -154,7 +154,7 @@ class FederatedServer:
             self._agg_count: float = 0.0
         
         for name, value in client_update.items():
-            value = np.array(value)
+            value = np.array(value, dtype=float)
             if name not in self._agg_sum:
                 self._agg_sum[name] = np.zeros_like(value, dtype=float)
             self._agg_sum[name] += value * num_samples
@@ -183,7 +183,7 @@ class FederatedServer:
             del self._agg_sum
             self._agg_count = 0.0
         
-        print("✓ Global model updated for this round")
+        print("[OK] Global model updated for this round")
         return self.global_model
 
     def get_global_model(self) -> Dict[str, np.ndarray]:
@@ -199,4 +199,4 @@ class FederatedServer:
         # Store shapes for HE decryption
         self.param_shapes = {k: v.shape for k, v in self.global_model.items()}
         
-        print("✓ Initial global model parameters set on server")
+        print("[OK] Initial global model parameters set on server")

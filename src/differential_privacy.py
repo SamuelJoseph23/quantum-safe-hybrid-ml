@@ -4,7 +4,7 @@ Adds privacy guarantees to federated learning gradients
 """
 
 import numpy as np
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, Optional
 import json
 
 
@@ -12,7 +12,7 @@ class DifferentialPrivacy:
     """
     Implements Differential Privacy using Laplace mechanism.
     
-    Adds calibrated noise to gradients to achieve (ε, δ)-differential privacy.
+    Adds calibrated noise to gradients to achieve (epsilon, delta)-differential privacy.
     Based on: Dwork et al., "Differential Privacy: A Survey of Results"
     """
     
@@ -45,9 +45,9 @@ class DifferentialPrivacy:
         self.privacy_spent = 0.0  # Track cumulative privacy budget
         self.rounds_executed = 0
         
-        print(f"✓ Differential Privacy initialized")
-        print(f"  - Privacy budget (ε): {self.epsilon}")
-        print(f"  - Failure probability (δ): {self.delta}")
+        print(f"[OK] Differential Privacy initialized")
+        print(f"  - Privacy budget (epsilon): {self.epsilon}")
+        print(f"  - Failure probability (delta): {self.delta}")
         print(f"  - Noise scale: {self.scale:.6f}")
         print(f"  - Mechanism: {self.noise_type.capitalize()}")
     
@@ -77,7 +77,7 @@ class DifferentialPrivacy:
         self.sensitivity = float(sensitivity)
         self.scale = self._calculate_scale()
 
-    def account_step(self, epsilon_spent: float | None = None) -> None:
+    def account_step(self, epsilon_spent: Optional[float] = None) -> None:
         """
         Account for one privacy mechanism application.
         """
@@ -152,17 +152,17 @@ class DifferentialPrivacy:
             Description of privacy level
         """
         if epsilon < 0.1:
-            return "Extremely Strong (ε < 0.1)"
+            return "Extremely Strong (epsilon < 0.1)"
         elif epsilon < 0.5:
-            return "Very Strong (0.1 ≤ ε < 0.5)"
+            return "Very Strong (0.1 <= epsilon < 0.5)"
         elif epsilon < 1.0:
-            return "Strong (0.5 ≤ ε < 1.0) [RECOMMENDED]"
+            return "Strong (0.5 <= epsilon < 1.0) [RECOMMENDED]"
         elif epsilon < 5.0:
-            return "Moderate (1.0 ≤ ε < 5.0)"
+            return "Moderate (1.0 <= epsilon < 5.0)"
         elif epsilon < 10.0:
-            return "Weak (5.0 ≤ ε < 10.0)"
+            return "Weak (5.0 <= epsilon < 10.0)"
         else:
-            return "Very Weak (ε ≥ 10.0)"
+            return "Very Weak (epsilon >= 10.0)"
 
 
 class DPAnalyzer:
@@ -223,10 +223,25 @@ class DPAnalyzer:
             "max_noise_magnitude": np.max(self.metrics['noise_magnitude'])
         }
     
-    def save_report(self, filename: str = '../results/metrics/dp_analysis.json'):
+    def save_report(self, filename: str = None):
         """Save analysis to JSON file."""
         import os
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        from pathlib import Path
+        
+        if filename is None:
+            # Try to get project root
+            current_file = Path(__file__)
+            project_root = current_file.parent.parent
+            filename = project_root / "results" / "metrics" / "dp_analysis.json"
+        else:
+            filename = Path(filename)
+            if not filename.is_absolute():
+                # Assume relative to project root
+                current_file = Path(__file__)
+                project_root = current_file.parent.parent
+                filename = project_root / filename
+        
+        filename.parent.mkdir(parents=True, exist_ok=True)
         
         report = {
             "metrics": self.metrics,
@@ -236,7 +251,7 @@ class DPAnalyzer:
         with open(filename, 'w') as f:
             json.dump(report, f, indent=2, default=float)
         
-        print(f"✓ DP analysis saved to {filename}")
+        print(f"[OK] DP analysis saved to {filename}")
 
 
 class DPGradientClipper:

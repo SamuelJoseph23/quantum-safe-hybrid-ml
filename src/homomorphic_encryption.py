@@ -23,7 +23,7 @@ class HEManager:
         """
         # Generate Paillier keypair
         self.public_key, self.private_key = paillier.generate_paillier_keypair(n_length=key_size)
-        print(f"✓ Paillier HE initialized (key_size={key_size} bits)")
+        print(f"[OK] Paillier HE initialized (key_size={key_size} bits)")
     
     def get_public_key(self):
         """
@@ -62,6 +62,13 @@ class HEManager:
         """
         if public_key is None:
             public_key = self.public_key
+        
+        if public_key is None:
+            raise ValueError("No public key provided for encryption")
+        
+        # Ensure input is numpy array
+        if not isinstance(vector, np.ndarray):
+            vector = np.array(vector)
         
         # Flatten if multi-dimensional
         flat_vector = vector.flatten()

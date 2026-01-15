@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, Any, Union
+from typing import Dict, Any, Union, Optional
 from pqc_auth import PQCAuthenticator
 from pqc_channel import PQCSecureChannel
 from homomorphic_encryption import HEManager
@@ -34,7 +34,7 @@ class FederatedClient:
         # HE public key (will be received from server)
         self.he_public_key = None
         
-        print(f"✓ Client '{client_id}' initialized (DP: {self.use_dp})")
+        print(f"[OK] Client '{client_id}' initialized (DP: {self.use_dp})")
 
     def register_with_server(self, server_address=None) -> Dict[str, str]:
         """
@@ -60,10 +60,10 @@ class FederatedClient:
         Phase 3A: Apply Local Differential Privacy (LDP) to weight updates.
         
         Mechanism:
-        1. Calculate Delta: ΔW = W_local - W_global
+        1. Calculate Delta: delta_W = W_local - W_global
         2. Clip Delta: Ensure L2 norm <= clipping_norm
         3. Add Noise: Add Laplace noise scaled by sensitivity/epsilon
-        4. Reconstruct: W_new = W_global + ΔW_clipped + Noise
+        4. Reconstruct: W_new = W_global + delta_W_clipped + Noise
         """
         if not self.use_dp:
             return local_weights
@@ -97,7 +97,7 @@ class FederatedClient:
 
     def secure_send_update(self, model_update: Dict[str, Any],
                           server_kyber_pk: str,
-                          session_key: bytes = None,
+                          session_key: Optional[bytes] = None,
                           use_he: bool = True,
                           msg_counter: int = 0) -> Dict[str, Any]:
         """
@@ -120,7 +120,9 @@ class FederatedClient:
             payload_structure['kyber_ciphertext'] = None
 
         # Step 1.5: Apply Homomorphic Encryption if enabled
-        if use_he and self.he_public_key:
+        if use_he:
+            if self.he_public_key is None:
+                raise ValueError(f"HE enabled but no public key set for client {self.client_id}")
             # Create a temporary HE manager for encryption (no private key needed)
             temp_he = HEManager.__new__(HEManager)
             temp_he.public_key = self.he_public_key
@@ -129,12 +131,11 @@ class FederatedClient:
             encrypted_params = {}
             for param_name, param_value in model_update['model_params'].items():
                 
-                # --- FIX: Ensure input is always a NumPy array ---
+                # Ensure input is always a NumPy array
                 if isinstance(param_value, np.ndarray):
                     vec = param_value
                 else:
                     vec = np.array(param_value)
-                # -----------------------------------------------
                     
                 encrypted_list = temp_he.encrypt_vector(vec, self.he_public_key)
                 # Serialize encrypted vector to JSON-safe payload

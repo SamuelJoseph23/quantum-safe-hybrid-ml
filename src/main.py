@@ -10,12 +10,17 @@ import numpy as np
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import accuracy_score
 from federated_server import FederatedServer
 from federated_client import FederatedClient
 from differential_privacy import DPAnalyzer
 from data_utils import load_and_preprocess_data
+
+# Get project root directory (parent of src/)
+PROJECT_ROOT = Path(__file__).parent.parent
+RESULTS_DIR = PROJECT_ROOT / "results"
 
 # --- Differential Privacy Configuration ---
 DP_CONFIG = {
@@ -54,21 +59,42 @@ def evaluate_global_model(server_weights, server_intercept, X_test, y_test):
     acc = accuracy_score(y_test, y_pred)
     return acc
 
-def save_results(results, filename='../results/metrics/training_results.json'):
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+def save_results(results, filename=None):
+    if filename is None:
+        filename = RESULTS_DIR / "metrics" / "training_results.json"
+    else:
+        filename = Path(filename)
+        if not filename.is_absolute():
+            filename = RESULTS_DIR / filename.relative_to(Path("../results"))
+    
+    filename.parent.mkdir(parents=True, exist_ok=True)
     with open(filename, 'w') as f:
         json.dump(results, f, indent=2)
-    print(f"✓ Results saved to {filename}")
+    print(f"[OK] Results saved to {filename}")
 
-def save_model(model_params, filename='../results/models/final_model.npz'):
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+def save_model(model_params, filename=None):
+    if filename is None:
+        filename = RESULTS_DIR / "models" / "final_model.npz"
+    else:
+        filename = Path(filename)
+        if not filename.is_absolute():
+            filename = RESULTS_DIR / filename.relative_to(Path("../results"))
+    
+    filename.parent.mkdir(parents=True, exist_ok=True)
     np.savez(filename, **model_params)
-    print(f"✓ Model saved to {filename}")
+    print(f"[OK] Model saved to {filename}")
 
-def plot_results(results, filename='../results/plots/accuracy_plot.png'):
+def plot_results(results, filename=None):
     try:
         import matplotlib.pyplot as plt
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        if filename is None:
+            filename = RESULTS_DIR / "plots" / "accuracy_plot.png"
+        else:
+            filename = Path(filename)
+            if not filename.is_absolute():
+                filename = RESULTS_DIR / filename.relative_to(Path("../results"))
+        
+        filename.parent.mkdir(parents=True, exist_ok=True)
         
         rounds = [r['round'] for r in results['rounds']]
         accuracies = [r['accuracy'] for r in results['rounds']]
@@ -86,7 +112,7 @@ def plot_results(results, filename='../results/plots/accuracy_plot.png'):
         
         plt.tight_layout()
         plt.savefig(filename, dpi=300, bbox_inches='tight')
-        print(f"✓ Plot saved to {filename}")
+        print(f"[OK] Plot saved to {filename}")
         plt.close()
     except ImportError:
         pass
@@ -96,21 +122,29 @@ def main():
     # 1. Setup Data
     # ------------------------------------------------------------------
     NUM_CLIENTS = 3
-    client_data, test_data = load_and_preprocess_data(NUM_CLIENTS)
-    X_test, y_test = test_data
-    n_features = X_test.shape[1]
+    try:
+        client_data, test_data = load_and_preprocess_data(NUM_CLIENTS)
+        X_test, y_test = test_data
+        n_features = X_test.shape[1]
+    except Exception as e:
+        print(f"[ERROR] Failed to load data: {e}")
+        raise
 
     # ------------------------------------------------------------------
     # 2. Initialize Server
     # ------------------------------------------------------------------
     USE_HE = True
-    server = FederatedServer(security_level=2, use_he=USE_HE)
-    
-    initial_model = {
-        "W": np.zeros((1, n_features), dtype=float),
-        "b": np.zeros((1,), dtype=float),
-    }
-    server.set_initial_model(initial_model)
+    try:
+        server = FederatedServer(security_level=2, use_he=USE_HE)
+        
+        initial_model = {
+            "W": np.zeros((1, n_features), dtype=float),
+            "b": np.zeros((1,), dtype=float),
+        }
+        server.set_initial_model(initial_model)
+    except Exception as e:
+        print(f"[ERROR] Failed to initialize server: {e}")
+        raise
 
     # ------------------------------------------------------------------
     # 3. Create and Register Clients
@@ -240,13 +274,19 @@ def main():
     print("\n" + "="*70)
     print("Training complete.")
     
-    save_results(results)
-    save_model(server.get_global_model())
-    plot_results(results)
+    try:
+        save_results(results)
+        save_model(server.get_global_model())
+        plot_results(results)
+        
+        if DP_CONFIG["enabled"]:
+            dp_analyzer.save_report()
+            print(f"Final Privacy Spent: {round_privacy_spent:.2f}")
+    except Exception as e:
+        print(f"⚠ Warning: Failed to save results: {e}")
+        # Continue execution - results are still printed
     
-    if DP_CONFIG["enabled"]:
-        dp_analyzer.save_report()
-        print(f"Final Privacy Spent: {round_privacy_spent:.2f}")
+    print("\n[SUCCESS] All done!")
 
 if __name__ == "__main__":
     main()

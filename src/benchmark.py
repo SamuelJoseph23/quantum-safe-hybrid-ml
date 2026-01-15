@@ -8,13 +8,16 @@ import json
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import accuracy_score
-import sys
-
 from federated_server import FederatedServer
 from federated_client import FederatedClient
 from data_utils import load_and_preprocess_data
+
+# Get project root directory (parent of src/)
+PROJECT_ROOT = Path(__file__).parent.parent
+RESULTS_DIR = PROJECT_ROOT / "results"
 
 
 def train_local_model_sklearn(global_weights, global_intercept, X_local, y_local):
@@ -211,9 +214,16 @@ def run_experiment(use_he, num_clients=3, num_rounds=5):
     return results
 
 
-def save_benchmark_results(plaintext_results, he_results, filename='../results/metrics/benchmark_results.json'):
+def save_benchmark_results(plaintext_results, he_results, filename=None):
     """Save benchmark comparison results."""
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    if filename is None:
+        filename = RESULTS_DIR / "metrics" / "benchmark_results.json"
+    else:
+        filename = Path(filename)
+        if not filename.is_absolute():
+            filename = RESULTS_DIR / filename.relative_to(Path("../results"))
+    
+    filename.parent.mkdir(parents=True, exist_ok=True)
     
     comparison = {
         "timestamp": datetime.now().isoformat(),
@@ -230,7 +240,7 @@ def save_benchmark_results(plaintext_results, he_results, filename='../results/m
     with open(filename, 'w') as f:
         json.dump(comparison, f, indent=2)
     
-    print(f"\n✓ Benchmark results saved to {filename}")
+    print(f"\n[OK] Benchmark results saved to {filename}")
     return comparison
 
 
@@ -238,7 +248,8 @@ def create_benchmark_plots(comparison):
     """Create comprehensive benchmark visualization plots."""
     import matplotlib.pyplot as plt
     
-    os.makedirs('../results/plots', exist_ok=True)
+    plots_dir = RESULTS_DIR / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
     
     plaintext = comparison["plaintext"]
     he = comparison["homomorphic_encryption"]
@@ -364,8 +375,9 @@ def create_benchmark_plots(comparison):
                  fontsize=16, fontweight='bold', y=0.98)
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
-    plt.savefig('../results/plots/benchmark_comparison.png', dpi=300, bbox_inches='tight')
-    print("✓ Benchmark plot saved to ../results/plots/benchmark_comparison.png")
+    plot_path = plots_dir / "benchmark_comparison.png"
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    print(f"[OK] Benchmark plot saved to {plot_path}")
     plt.close()
 
 
