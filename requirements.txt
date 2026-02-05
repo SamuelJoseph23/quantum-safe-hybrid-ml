@@ -15,8 +15,9 @@ phe>=1.5.0
 matplotlib>=3.7.0
 colorama>=0.4.6
 
-# Optional
-scipy>=1.11.0
+# Web API
+fastapi>=0.100.0
+uvicorn>=0.23.0
 
 # Dev / Tests
 pytest>=7.4.0

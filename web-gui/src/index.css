@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+body {
+    background-color: #0f172a; /* Force dark background */
+}
+
+/* Glassmorphism Classes */
+.glass-panel {
+    @apply bg-slate-900/60 backdrop-blur-md border border-slate-700/50 rounded-xl p-4 shadow-lg;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+
+.cyber-button {
+    @apply px-4 py-2 bg-slate-800 border border-cyber-cyan/50 text-cyber-cyan font-mono uppercase tracking-wider 
+    hover:bg-cyber-cyan/10 hover:shadow-neon transition-all duration-300 rounded-md
+    disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none;
+}
+
+.cyber-input {
+    @apply bg-slate-950 border border-slate-700 text-cyan-400 font-mono p-2 rounded focus:outline-none focus:border-cyber-cyan focus:shadow-neon transition-all;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    @apply bg-slate-950;
+}
+::-webkit-scrollbar-thumb {
+    @apply bg-slate-700 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+    @apply bg-cyber-cyan;
+}
