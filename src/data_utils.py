@@ -25,8 +25,8 @@ def load_and_preprocess_data(n_clients: int, split_strategy: str = "iid", non_ii
     
     print("Loading Adult Income dataset...")
     try:
-        # Fetch dataset from OpenML (ID 1590 is the adult dataset)
-        adult = fetch_openml(data_id=1590, as_frame=True, parser='auto')
+        # Fetch dataset from OpenML (Name 'adult', version 1 is standard)
+        adult = fetch_openml(name='adult', version=1, as_frame=True, parser='auto')
         X = adult.data
         y = adult.target
     except Exception as e:

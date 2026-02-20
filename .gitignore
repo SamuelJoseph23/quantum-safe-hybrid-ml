@@ -165,7 +165,26 @@ pip-delete-this-directory.txt
 .pytest_cache/
 .coverage
 htmlcov/
+coverage.xml
+nosetests.xml
 
-# Benchmarking outputs (optional - uncomment if you want to track these)
-# results/metrics/benchmark_results.json
-# results/plots/benchmark_comparison.png
+# Web GUI (Node.js/Vite)
+web-gui/node_modules/
+web-gui/dist/
+web-gui/.env
+web-gui/.env.local
+web-gui/*.local
+web-gui/.npm
+web-gui/package-lock.json
+
+# Project Specific (Presentation & Logs)
+training_logs.txt
+presentation_report.txt
+demo_visuals.log
+*.webp
+*.png
+!README.md
+
+# Benchmarking outputs
+results/metrics/benchmark_results.json
+results/plots/benchmark_comparison.png

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quantum-safe-hybrid-ml"
+version = "1.0.0"
+authors = [
+  { name="Samuel Joseph", email="[INSERT CONTACT EMAIL]" },
+]
+description = "A multi-layered privacy-preserving federated learning framework using PQC, HE, and DP."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "dilithium-py>=1.1.0",
+    "kyber-py>=0.1.0",
+    "cryptography>=41.0.0",
+    "phe>=1.5.0",
+    "matplotlib>=3.7.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "colorama>=0.4.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/SamuelJoseph23/quantum-safe-hybrid-ml"
+"Bug Tracker" = "https://github.com/SamuelJoseph23/quantum-safe-hybrid-ml/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
