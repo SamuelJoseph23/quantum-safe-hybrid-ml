@@ -23,7 +23,7 @@ Thank you for your interest in contributing to the Quantum-Safe Hybrid ML projec
 7. **Pull Request**: Submit a PR to the `main` branch.
 
 ## Coding Standards
-- Follow PsEP 8 for Python code.
+- Follow PEP 8 for Python code.
 - Ensure all new features are accompanied by unit tests in the `tests/` directory.
 - Update documentation in the `src/` files (docstrings) and the `README.md` if necessary.
 
