@@ -283,7 +283,7 @@ def main():
             dp_analyzer.save_report()
             print(f"Final Privacy Spent: {round_privacy_spent:.2f}")
     except Exception as e:
-        print(f"⚠ Warning: Failed to save results: {e}")
+        print(f"[WARNING] Failed to save results: {e}")
         # Continue execution - results are still printed
     
     print("\n[SUCCESS] All done!")

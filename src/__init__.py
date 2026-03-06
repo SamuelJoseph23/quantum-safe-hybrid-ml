@@ -1,3 +1,3 @@
 """
-Src package for threead-PQC-FL
+Quantum-Safe Hybrid Federated Learning (PQC-FL)
 """

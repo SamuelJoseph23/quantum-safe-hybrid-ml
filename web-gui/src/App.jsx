@@ -99,7 +99,7 @@ const App = () => {
   };
 
   const triggerAttack = async (type) => {
-    addLog(`⚠️ SIMULATING ${type.toUpperCase()} ATTACK...`, 'error');
+    addLog(`[ALERT] SIMULATING ${type.toUpperCase()} ATTACK...`, 'error');
     const res = await fetch(`${API_BASE}/attack/simulate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
