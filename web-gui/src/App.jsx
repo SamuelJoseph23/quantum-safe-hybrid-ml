@@ -1,34 +1,37 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
-  ShieldCheck, ShieldAlert, Lock, Unlock,
-  Activity, Server, Database, Ghost, Terminal as TerminalIcon
+  ShieldCheck, ShieldAlert, Lock,
+  Activity, Ghost, Terminal as TerminalIcon, RotateCcw, Play, Zap
 } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 // --- API Client ---
 const API_BASE = 'http://127.0.0.1:8000/api';
 
 const App = () => {
-  const [status, setStatus] = useState(null);
   const [logs, setLogs] = useState([]);
   const [handshake, setHandshake] = useState(null);
-  const [heData, setHeData] = useState(null);
-  const [privacyBudget, setPrivacyBudget] = useState(100);
-  const [epsilon, setEpsilon] = useState(2.0);
   const [threatLevel, setThreatLevel] = useState("LOW");
+  const [epsilon, setEpsilon] = useState(10.0);
+  const [currentRound, setCurrentRound] = useState(0);
+  const [maxRounds] = useState(10);
+  const [accuracyHistory, setAccuracyHistory] = useState([]);
+  const [trainingComplete, setTrainingComplete] = useState(false);
+  const [isTraining, setIsTraining] = useState(false);
+  const [encryptedSnippet, setEncryptedSnippet] = useState(null);
+  const [globalWeightsSample, setGlobalWeightsSample] = useState(null);
+  const [apiReady, setApiReady] = useState(false);
 
   const scrollRef = useRef(null);
 
   // --- Effects ---
   useEffect(() => {
-    // Poll status every 2 seconds
-    const interval = setInterval(fetchStatus, 2000);
+    const interval = setInterval(fetchStatus, 3000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    // Auto-scroll logs
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
@@ -37,7 +40,7 @@ const App = () => {
   // --- Actions ---
   const addLog = (msg, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
-    setLogs(prev => [...prev.slice(-19), { timestamp, msg, type }]);
+    setLogs(prev => [...prev.slice(-29), { timestamp, msg, type }]);
   };
 
   const fetchStatus = async () => {
@@ -45,9 +48,14 @@ const App = () => {
       const res = await fetch(`${API_BASE}/status`);
       const data = await res.json();
       setThreatLevel(data.threat_level);
-      setPrivacyBudget(data.privacy_budget);
+      setCurrentRound(data.round);
+      setTrainingComplete(data.training_complete);
+      if (data.accuracy_history && data.accuracy_history.length > 0) {
+        setAccuracyHistory(data.accuracy_history);
+      }
+      if (data.status === 'online') setApiReady(true);
     } catch (e) {
-      // console.error(e);
+      // API not up yet
     }
   };
 
@@ -62,28 +70,92 @@ const App = () => {
         addLog(`Session Key: ${data.session_key.substring(0, 16)}...`, 'info');
       }
     } catch (e) {
-      addLog("Handshake Failed! Network Unreachable.", 'error');
+      addLog("Handshake Failed! Backend Unreachable.", 'error');
     }
   };
 
-  const simulateHE = async () => {
+  const trainOneRound = async () => {
     if (!handshake) {
-      addLog("Cannot train: No Secure Channel!", 'error');
+      addLog("Cannot train: No Secure Channel! Initiate Handshake first.", 'error');
+      return;
+    }
+    if (trainingComplete) {
+      addLog("Training already complete (10/10 rounds). Reset to train again.", 'warn');
       return;
     }
 
-    addLog("Starting Encrypted Training Round...", 'info');
+    setIsTraining(true);
+    addLog(`Starting Round ${currentRound + 1}/${maxRounds}...`, 'info');
+
     try {
-      const res = await fetch(`${API_BASE}/he/simulate`);
+      const res = await fetch(`${API_BASE}/train/round`);
       const data = await res.json();
-      setHeData(data);
-      addLog("Client Weights Encrypted (Paillier).", 'info');
-      addLog("Server Aggregating Blindfolded...", 'warn');
-      setTimeout(() => {
-        addLog(`Decrypted Aggregate: [${data.decrypted_sum.map(n => n.toFixed(2)).join(', ')}]`, 'success');
-      }, 800);
+
+      setCurrentRound(data.round);
+      setAccuracyHistory(data.accuracy_history);
+      setTrainingComplete(data.training_complete);
+      setEncryptedSnippet(data.encrypted_snippet);
+      setGlobalWeightsSample(data.global_weights_sample);
+
+      // Log each client
+      data.clients.forEach(c => {
+        addLog(`[${c.client_id}] Trained on ${c.num_samples} samples (DP: ${c.dp_noise_applied})`, 'info');
+      });
+      addLog(`Server aggregated blindfolded (Paillier HE).`, 'warn');
+      addLog(`Round ${data.round} Accuracy: ${(data.accuracy * 100).toFixed(2)}%`, 'success');
+
+      if (data.training_complete) {
+        addLog(`[COMPLETE] All ${maxRounds} rounds finished!`, 'success');
+      }
     } catch (e) {
-      addLog("Training Failed.", 'error');
+      addLog("Training round failed. Is the backend running?", 'error');
+    } finally {
+      setIsTraining(false);
+    }
+  };
+
+  const trainAllRounds = async () => {
+    if (!handshake) {
+      addLog("Cannot train: No Secure Channel! Initiate Handshake first.", 'error');
+      return;
+    }
+    if (trainingComplete) {
+      addLog("Training already complete. Reset to train again.", 'warn');
+      return;
+    }
+
+    setIsTraining(true);
+    addLog(`Running all remaining rounds...`, 'info');
+
+    try {
+      const res = await fetch(`${API_BASE}/train/auto`);
+      const data = await res.json();
+
+      setAccuracyHistory(data.accuracy_history);
+      setCurrentRound(data.total_rounds);
+      setTrainingComplete(true);
+
+      addLog(`${data.msg}. Final Accuracy: ${(data.final_accuracy * 100).toFixed(2)}%`, 'success');
+    } catch (e) {
+      addLog("Auto-training failed.", 'error');
+    } finally {
+      setIsTraining(false);
+    }
+  };
+
+  const resetPipeline = async () => {
+    try {
+      await fetch(`${API_BASE}/reset`, { method: 'POST' });
+      setHandshake(null);
+      setAccuracyHistory([]);
+      setCurrentRound(0);
+      setTrainingComplete(false);
+      setEncryptedSnippet(null);
+      setGlobalWeightsSample(null);
+      setLogs([]);
+      addLog("Pipeline reset. Ready for new training session.", 'success');
+    } catch (e) {
+      addLog("Reset failed.", 'error');
     }
   };
 
@@ -95,7 +167,7 @@ const App = () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ epsilon: newEps })
     });
-    addLog(`Privacy Budget Updated: ε = ${newEps}`, 'warn');
+    addLog(`Privacy Budget Updated: epsilon = ${newEps} on all clients`, 'warn');
   };
 
   const triggerAttack = async (type) => {
@@ -124,15 +196,20 @@ const App = () => {
             <h1 className="text-3xl font-bold tracking-tighter text-white">
               QUANTUM<span className="text-cyber-cyan">SAFE</span>.AI
             </h1>
-            <p className="text-xs text-slate-500 font-mono">SOC DASHBOARD // V2.0.4</p>
+            <p className="text-xs text-slate-500 font-mono">LIVE TRAINING DASHBOARD // V3.0</p>
           </div>
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex gap-4 items-center">
+          <StatusBadge label="ROUND" value={`${currentRound}/${maxRounds}`}
+            color={trainingComplete ? 'text-cyber-green' : 'text-cyber-cyan'} />
           <StatusBadge label="THREAT LEVEL" value={threatLevel}
             color={threatLevel === 'LOW' ? 'text-cyber-green' : 'text-cyber-red animate-pulse'} />
           <StatusBadge label="CHANNEL" value={handshake ? "ENCRYPTED (KYBER)" : "UNSECURED"}
             color={handshake ? 'text-cyber-cyan' : 'text-slate-500'} />
+          <button onClick={resetPipeline} className="cyber-button flex items-center gap-2 text-xs">
+            <RotateCcw className="w-3 h-3" /> RESET
+          </button>
         </div>
       </header>
 
@@ -157,7 +234,7 @@ const App = () => {
             </div>
             <button onClick={runHandshake} disabled={handshake}
               className="cyber-button w-full">
-              {handshake ? "RE-KEY CHANNEL" : "INITIATE HANDSHAKE"}
+              {handshake ? "SESSION ACTIVE" : "INITIATE HANDSHAKE"}
             </button>
           </div>
 
@@ -173,14 +250,14 @@ const App = () => {
                 <span>ACCURACY</span>
               </div>
               <input
-                type="range" min="0.1" max="10.0" step="0.1"
+                type="range" min="0.1" max="20.0" step="0.1"
                 value={epsilon} onChange={(e) => updatePrivacy(e.target.value)}
                 className="w-full accent-cyber-cyan h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer"
               />
               <div className="text-center font-mono text-xl text-white">
-                ε = {epsilon.toFixed(1)}
+                epsilon = {epsilon.toFixed(1)}
               </div>
-              <p className="text-xs text-slate-500 text-center">Lower ε = More Noise</p>
+              <p className="text-xs text-slate-500 text-center">Lower epsilon = More Noise = Stronger Privacy</p>
             </div>
           </div>
 
@@ -205,36 +282,64 @@ const App = () => {
         {/* MIDDLE COL: VISUALIZATION */}
         <div className="col-span-6 space-y-6 flex flex-col">
 
-          {/* Main Graph (Placeholder for Real Data) */}
-          <div className="glass-panel flex-1 relative overflow-hidden group">
-            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10"></div>
+          {/* Accuracy Chart */}
+          <div className="glass-panel flex-1 relative overflow-hidden">
             <h2 className="text-cyber-cyan font-mono text-sm mb-4 flex items-center gap-2">
-              <Activity className="w-4 h-4" /> NETWORK TRAFFIC ANALYSIS
+              <Activity className="w-4 h-4" /> LIVE MODEL ACCURACY
             </h2>
 
-            <div className="h-64 w-full flex items-end gap-1 justify-center opacity-80">
-              {/* Simulated Bars */}
-              {Array.from({ length: 40 }).map((_, i) => (
-                <div key={i}
-                  style={{ height: `${20 + Math.random() * 60}%` }}
-                  className="w-2 bg-cyber-cyan/30 rounded-t hover:bg-cyber-cyan transition-all"
-                />
-              ))}
-            </div>
+            {accuracyHistory.length > 0 ? (
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={accuracyHistory}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis
+                    dataKey="round"
+                    stroke="#64748b"
+                    fontSize={12}
+                    tickFormatter={(v) => `R${v}`}
+                  />
+                  <YAxis
+                    stroke="#64748b"
+                    fontSize={12}
+                    domain={[0.5, 0.85]}
+                    tickFormatter={(v) => `${(v * 100).toFixed(0)}%`}
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #22d3ee', borderRadius: '8px' }}
+                    labelFormatter={(v) => `Round ${v}`}
+                    formatter={(v) => [`${(v * 100).toFixed(2)}%`, 'Accuracy']}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="accuracy"
+                    stroke="#22d3ee"
+                    strokeWidth={3}
+                    dot={{ r: 5, fill: '#22d3ee', stroke: '#0f172a', strokeWidth: 2 }}
+                    activeDot={{ r: 7, fill: '#22d3ee' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-64 flex items-center justify-center text-slate-600 font-mono text-sm">
+                {apiReady
+                  ? "Initiate Handshake, then click Train to see real accuracy data."
+                  : "Connecting to backend..."}
+              </div>
+            )}
 
             {/* HE Visualization Overlay */}
-            {heData && (
+            {encryptedSnippet && (
               <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-                className="absolute bottom-4 left-4 right-4 bg-slate-950/90 border border-cyber-green/30 p-4 rounded-lg">
-                <h3 className="text-cyber-green font-mono text-xs mb-2">HOMOMORPHIC AGGREGATION RESULT</h3>
+                className="mt-2 bg-slate-950/90 border border-cyber-green/30 p-3 rounded-lg">
+                <h3 className="text-cyber-green font-mono text-xs mb-2">ENCRYPTED MODEL STATE (PAILLIER HE)</h3>
                 <div className="grid grid-cols-2 gap-4 text-xs font-mono">
                   <div>
-                    <span className="text-slate-500">CLIENT VIEW:</span>
-                    <div className="text-white mt-1">[{heData.client_view.map(n => n.toFixed(2)).join(', ')}]</div>
+                    <span className="text-slate-500">DECRYPTED WEIGHTS (sample):</span>
+                    <div className="text-white mt-1">[{globalWeightsSample && globalWeightsSample.map(n => n.toFixed(4)).join(', ')}]</div>
                   </div>
                   <div>
                     <span className="text-slate-500">SERVER VIEW (ENCRYPTED):</span>
-                    <div className="text-cyber-green mt-1 truncate">{heData.server_view_snippet}</div>
+                    <div className="text-cyber-green mt-1 truncate">{encryptedSnippet}</div>
                   </div>
                 </div>
               </motion.div>
@@ -242,10 +347,22 @@ const App = () => {
           </div>
 
           {/* Action Bar */}
-          <div className="glass-panel">
-            <button onClick={simulateHE}
-              className="w-full py-4 bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan font-bold rounded hover:bg-cyber-cyan hover:text-slate-900 transition-all tracking-widest">
-              RUN FEDERATED TRAINING ROUND
+          <div className="glass-panel flex gap-4">
+            <button onClick={trainOneRound} disabled={isTraining || trainingComplete}
+              className="flex-1 py-4 bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan font-bold rounded
+                hover:bg-cyber-cyan hover:text-slate-900 transition-all tracking-widest
+                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-cyber-cyan/10 disabled:hover:text-cyber-cyan
+                flex items-center justify-center gap-2">
+              <Play className="w-5 h-5" />
+              {isTraining ? "TRAINING..." : "RUN 1 ROUND"}
+            </button>
+            <button onClick={trainAllRounds} disabled={isTraining || trainingComplete}
+              className="flex-1 py-4 bg-cyber-green/10 border border-cyber-green text-cyber-green font-bold rounded
+                hover:bg-cyber-green hover:text-slate-900 transition-all tracking-widest
+                disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-cyber-green/10 disabled:hover:text-cyber-green
+                flex items-center justify-center gap-2">
+              <Zap className="w-5 h-5" />
+              {trainingComplete ? "COMPLETE" : "RUN ALL 10 ROUNDS"}
             </button>
           </div>
         </div>
