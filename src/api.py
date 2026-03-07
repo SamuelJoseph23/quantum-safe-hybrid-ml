@@ -245,6 +245,7 @@ async def train_one_round():
     global_b = global_params["b"]
 
     client_logs = []
+    X_test, y_test = pipeline.test_data
 
     for i, client in enumerate(pipeline.clients):
         cid = client.client_id
@@ -289,6 +290,9 @@ async def train_one_round():
             "client_id": cid,
             "num_samples": len(X_local),
             "dp_noise_applied": pipeline.dp_config["enabled"],
+            "privacy_spent": round(client.dp_engine.privacy_spent, 2) if client.use_dp else 0,
+            "local_accuracy": round(evaluate_model(final_W, final_b, X_test, y_test), 4),
+            "status": "SENT",
         })
 
     # Server aggregation
