@@ -15,9 +15,7 @@ const App = () => {
   const [threatLevel, setThreatLevel] = useState("LOW");
   const [epsilon, setEpsilon] = useState(10.0);
   const [currentRound, setCurrentRound] = useState(0);
-  const [maxRounds] = useState(10);
   const [accuracyHistory, setAccuracyHistory] = useState([]);
-  const [trainingComplete, setTrainingComplete] = useState(false);
   const [isTraining, setIsTraining] = useState(false);
   const [encryptedSnippet, setEncryptedSnippet] = useState(null);
   const [globalWeightsSample, setGlobalWeightsSample] = useState(null);
@@ -55,7 +53,6 @@ const App = () => {
       const data = await res.json();
       setThreatLevel(data.threat_level);
       setCurrentRound(data.round);
-      setTrainingComplete(data.training_complete);
       if (data.accuracy_history?.length > 0) setAccuracyHistory(data.accuracy_history);
       if (data.status === 'online') setApiReady(true);
     } catch (e) { /* backend not up */ }
@@ -79,11 +76,10 @@ const App = () => {
 
   const trainOneRound = async () => {
     if (!handshake) { addLog("No Secure Channel! Initiate Handshake first.", 'error'); return; }
-    if (trainingComplete) { addLog("Training complete. Reset to train again.", 'warn'); return; }
 
     setIsTraining(true);
     const nextRound = currentRound + 1;
-    addLog(`--- Round ${nextRound}/${maxRounds} ---`, 'info');
+    addLog(`--- Round ${nextRound} ---`, 'info');
 
     // Animate: clients training
     setClientStatuses(prev => prev.map(c => ({ ...c, status: 'TRAINING' })));
@@ -105,7 +101,6 @@ const App = () => {
       // Update state
       setCurrentRound(data.round);
       setAccuracyHistory(data.accuracy_history);
-      setTrainingComplete(data.training_complete);
       setEncryptedSnippet(data.encrypted_snippet);
       setGlobalWeightsSample(data.global_weights_sample);
       setServerAggregating(false);
@@ -113,7 +108,7 @@ const App = () => {
       // Update client statuses from API response
       setClientStatuses(data.clients.map(c => ({
         ...c,
-        status: data.training_complete ? 'COMPLETE' : 'READY',
+        status: 'READY',
       })));
 
       // Logs
@@ -122,8 +117,6 @@ const App = () => {
       });
       addLog(`Server aggregated (Paillier HE, blindfolded).`, 'warn');
       addLog(`Round ${data.round} Global Accuracy: ${(data.accuracy * 100).toFixed(2)}%`, 'success');
-
-      if (data.training_complete) addLog(`All ${maxRounds} rounds complete!`, 'success');
     } catch (e) {
       addLog("Training round failed.", 'error');
       setServerAggregating(false);
@@ -134,10 +127,9 @@ const App = () => {
 
   const trainAllRounds = async () => {
     if (!handshake) { addLog("No Secure Channel! Initiate Handshake first.", 'error'); return; }
-    if (trainingComplete) { addLog("Training complete. Reset to train again.", 'warn'); return; }
 
     setIsTraining(true);
-    addLog("Running all remaining rounds...", 'info');
+    addLog("Running 10 rounds...", 'info');
     setClientStatuses(prev => prev.map(c => ({ ...c, status: 'TRAINING' })));
 
     try {
@@ -146,8 +138,7 @@ const App = () => {
 
       setAccuracyHistory(data.accuracy_history);
       setCurrentRound(data.total_rounds);
-      setTrainingComplete(true);
-      setClientStatuses(prev => prev.map(c => ({ ...c, status: 'COMPLETE' })));
+      setClientStatuses(prev => prev.map(c => ({ ...c, status: 'READY' })));
 
       addLog(`${data.msg}. Final Accuracy: ${(data.final_accuracy * 100).toFixed(2)}%`, 'success');
     } catch (e) {
@@ -163,7 +154,6 @@ const App = () => {
       setHandshake(null);
       setAccuracyHistory([]);
       setCurrentRound(0);
-      setTrainingComplete(false);
       setEncryptedSnippet(null);
       setGlobalWeightsSample(null);
       setClientStatuses([
@@ -270,12 +260,17 @@ const App = () => {
   };
 
   return (
-    <div className={`min-h-screen text-slate-200 font-sans selection:bg-cyber-cyan selection:text-cyber-dark p-4 transition-colors duration-500 ${attackActive === 'mitm' ? 'bg-red-950/40' :
-      attackActive === 'quantum' ? 'bg-purple-950/40' :
-        'bg-cyber-bg'
+    <div className={`min-h-screen font-sans selection:bg-cyber-cyan selection:text-cyber-dark p-6 transition-colors duration-500 ${attackActive === 'mitm' ? 'bg-red-950/20' :
+      attackActive === 'quantum' ? 'bg-purple-950/20' :
+        ''
       }`}>
+      
+      {/* Background ambient glow */}
+      <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-cyber-cyan/10 blur-[120px] pointer-events-none rounded-full" />
+      <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-cyber-green/5 blur-[120px] pointer-events-none rounded-full" />
 
-      {/* ATTACK OVERLAY */}
+      {/* Main Container */}
+      <div className="max-w-[1600px] mx-auto relative z-10 flex flex-col h-full">
       <AnimatePresence>
         {attackActive && (
           <motion.div
@@ -324,20 +319,20 @@ const App = () => {
       </AnimatePresence>
 
       {/* HEADER */}
-      <header className="flex justify-between items-center mb-6 border-b border-slate-800 pb-3">
-        <div className="flex items-center gap-3">
-          <ShieldCheck className="w-9 h-9 text-cyber-cyan animate-pulse" />
+      <header className="flex justify-between items-center mb-6 glass-panel !px-8 !py-5">
+        <div className="flex items-center gap-4">
+          <ShieldCheck className="w-10 h-10 text-cyber-cyan animate-pulse drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
           <div>
-            <h1 className="text-2xl font-bold tracking-tighter text-white">
-              QUANTUM<span className="text-cyber-cyan">SAFE</span>.AI
+            <h1 className="text-3xl font-display font-black tracking-widest text-white drop-shadow-md">
+              QUANTUM<span className="text-cyber-cyan">SAFE</span><span className="text-slate-500">.AI</span>
             </h1>
-            <p className="text-[10px] text-slate-500 font-mono">FEDERATED LEARNING DASHBOARD // V3.0</p>
+            <p className="text-[11px] text-cyber-cyan/60 font-mono font-bold tracking-[0.2em] mt-1">FEDERATED LEARNING INTELLIGENCE</p>
           </div>
         </div>
-        <div className="flex gap-4 items-center">
-          <StatusBadge label="ROUND" value={`${currentRound}/${maxRounds}`}
-            color={trainingComplete ? 'text-cyber-green' : 'text-cyber-cyan'} />
-          <StatusBadge label="THREAT" value={threatLevel}
+        <div className="flex gap-6 items-center">
+          <StatusBadge label="ROUND PROGRESS" value={currentRound}
+            color={'text-cyber-cyan'} />
+          <StatusBadge label="THREAT DETECTED" value={threatLevel}
             color={threatLevel === 'LOW' ? 'text-cyber-green' : 'text-cyber-red animate-pulse'} />
           <StatusBadge label="CHANNEL" value={handshake ? "KYBER-768" : "UNSECURED"}
             color={handshake ? 'text-cyber-cyan' : 'text-slate-500'} />
@@ -347,10 +342,10 @@ const App = () => {
         </div>
       </header>
 
-      <main className="grid grid-cols-12 gap-4" style={{ height: 'calc(100vh - 110px)' }}>
+      <main className="grid grid-cols-12 gap-5 flex-1" style={{ minHeight: 'calc(100vh - 140px)' }}>
 
         {/* LEFT COL: CONTROLS */}
-        <div className="col-span-2 space-y-4 flex flex-col">
+        <div className="col-span-12 lg:col-span-3 space-y-5 flex flex-col">
           {/* Handshake */}
           <div className="glass-panel space-y-3">
             <h2 className="text-cyber-cyan font-mono text-xs flex items-center gap-2">
@@ -379,8 +374,8 @@ const App = () => {
               </div>
               <input type="range" min="0.1" max="20.0" step="0.1" value={epsilon}
                 onChange={(e) => updatePrivacy(e.target.value)}
-                className="w-full accent-cyber-cyan h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer" />
-              <div className="text-center font-mono text-lg text-white">
+                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyber-cyan/50" />
+              <div className="text-center font-mono text-xl font-bold text-white tabular-nums drop-shadow-md">
                 e = {epsilon.toFixed(1)}
               </div>
             </div>
@@ -405,7 +400,7 @@ const App = () => {
         </div>
 
         {/* MIDDLE COL: FEDERATION + CHART */}
-        <div className="col-span-7 space-y-4 flex flex-col">
+        <div className="col-span-12 lg:col-span-6 space-y-5 flex flex-col">
 
           {/* FEDERATION TOPOLOGY */}
           <div className="glass-panel">
@@ -486,43 +481,45 @@ const App = () => {
 
           {/* ACTION BAR */}
           <div className="glass-panel flex gap-3">
-            <button onClick={trainOneRound} disabled={isTraining || trainingComplete}
+            <button onClick={trainOneRound} disabled={isTraining}
               className="flex-1 py-3 bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan font-bold rounded
                 hover:bg-cyber-cyan hover:text-slate-900 transition-all tracking-widest text-sm
                 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               <Play className="w-4 h-4" />
               {isTraining ? "TRAINING..." : "RUN 1 ROUND"}
             </button>
-            <button onClick={trainAllRounds} disabled={isTraining || trainingComplete}
+            <button onClick={trainAllRounds} disabled={isTraining}
               className="flex-1 py-3 bg-cyber-green/10 border border-cyber-green text-cyber-green font-bold rounded
                 hover:bg-cyber-green hover:text-slate-900 transition-all tracking-widest text-sm
                 disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               <Zap className="w-4 h-4" />
-              {trainingComplete ? "COMPLETE" : "RUN ALL 10 ROUNDS"}
+              RUN 10 ROUNDS
             </button>
           </div>
         </div>
 
         {/* RIGHT COL: LOGS */}
-        <div className="col-span-3 glass-panel flex flex-col">
-          <h2 className="text-slate-400 font-mono text-xs mb-2 flex items-center gap-2">
-            <TerminalIcon className="w-3 h-3" /> SYSTEM LOGS
+        <div className="col-span-12 lg:col-span-3 glass-panel flex flex-col h-[500px] lg:h-auto">
+          <h2 className="text-slate-400 font-mono text-xs mb-3 flex items-center gap-2 border-b border-slate-700/50 pb-2">
+            <TerminalIcon className="w-3 h-3" /> SECURE TERMINAL LOGS
           </h2>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto font-mono text-[10px] space-y-1.5 pr-1">
-            {logs.length === 0 && <span className="text-slate-600">Waiting for system events...</span>}
+          <div ref={scrollRef} className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-2 pr-2">
+            {logs.length === 0 && <span className="text-slate-600 animate-pulse">Waiting for system events...</span>}
             {logs.map((log, i) => (
-              <div key={i} className={
-                log.type === 'error' ? 'text-cyber-red' :
+              <div key={i} className={`flex gap-3 ${
+                log.type === 'error' ? 'text-cyber-red shadow-red-500/20' :
                   log.type === 'warn' ? 'text-yellow-400' :
                     log.type === 'success' ? 'text-cyber-green' : 'text-cyber-cyan'
-              }>
-                <span className="opacity-50">[{log.timestamp}]</span> {log.msg}
+              }`}>
+                <span className="opacity-40 shrink-0">[{log.timestamp}]</span>
+                <span className="break-words">{log.msg}</span>
               </div>
             ))}
           </div>
         </div>
 
       </main>
+      </div>
     </div>
   );
 };
@@ -579,25 +576,25 @@ const ClientNode = ({ client, index, attackActive, attackPhase }) => {
       <div className="space-y-1 text-[9px] font-mono">
         <div className="flex justify-between">
           <span className="opacity-60">STATUS</span>
-          <span className={`font-bold ${isCompromised ? 'animate-pulse text-red-400' :
+          <span className={`font-bold tabular-nums ${isCompromised ? 'animate-pulse text-red-400' :
               isBlocked ? 'text-yellow-400' :
                 client.status === 'TRAINING' ? 'animate-pulse text-yellow-400' :
-                  client.status === 'COMPLETE' ? 'text-cyber-green' : ''
+                  client.status === 'READY' ? 'text-cyber-cyan' : ''
             }`}>{client.status}</span>
         </div>
         {client.num_samples > 0 && (
           <>
-            <div className="flex justify-between">
-              <span className="opacity-60">SAMPLES</span>
-              <span>{client.num_samples.toLocaleString()}</span>
+            <div className="flex justify-between items-center mt-1">
+              <span className="opacity-50">SAMPLES</span>
+              <span className="tabular-nums font-bold">{client.num_samples.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="opacity-60">LOCAL ACC</span>
-              <span>{(client.local_accuracy * 100).toFixed(1)}%</span>
+            <div className="flex justify-between items-center mt-1">
+              <span className="opacity-50">LOCAL ACC</span>
+              <span className="tabular-nums font-bold text-white">{(client.local_accuracy * 100).toFixed(1)}%</span>
             </div>
-            <div className="flex justify-between">
-              <span className="opacity-60">DP SPENT</span>
-              <span>{client.privacy_spent}</span>
+            <div className="flex justify-between items-center mt-1">
+              <span className="opacity-50">DP SPENT</span>
+              <span className="tabular-nums font-bold text-yellow-400/80">{client.privacy_spent} ε</span>
             </div>
           </>
         )}
@@ -666,9 +663,9 @@ const ServerNode = ({ aggregating, accuracy, round, attackActive, attackPhase })
         </div>
       )}
       {accuracy !== null && !aggregating && !isUnderAttack && !isSecured && (
-        <div className="flex justify-center gap-4 text-[10px] font-mono mt-1">
-          <span className="text-slate-400">ROUND: <span className="text-white">{round}</span></span>
-          <span className="text-slate-400">GLOBAL ACC: <span className="text-cyber-green font-bold">{(accuracy * 100).toFixed(2)}%</span></span>
+        <div className="flex justify-center gap-6 text-[11px] font-mono mt-3 tabular-nums bg-slate-900/50 py-1.5 px-3 rounded-full border border-slate-700/50">
+          <span className="text-slate-400">ROUND: <span className="text-white font-bold">{round}</span></span>
+          <span className="text-slate-400">GLOBAL ACC: <span className="text-cyber-green font-bold text-sm">{(accuracy * 100).toFixed(2)}%</span></span>
         </div>
       )}
     </motion.div>
@@ -678,9 +675,9 @@ const ServerNode = ({ aggregating, accuracy, round, attackActive, attackPhase })
 
 // ─── Status Badge ─────────────────────────────────────────────
 const StatusBadge = ({ label, value, color }) => (
-  <div className="text-right">
-    <div className="text-[9px] text-slate-500 font-bold tracking-widest">{label}</div>
-    <div className={`text-xs font-mono font-bold ${color}`}>{value}</div>
+  <div className="text-right border-r border-slate-700/50 pr-6 last:border-0 last:pr-0">
+    <div className="text-[10px] text-slate-500 font-bold tracking-widest uppercase mb-1">{label}</div>
+    <div className={`text-base font-mono font-bold tracking-wider tabular-nums ${color}`}>{value}</div>
   </div>
 );
 

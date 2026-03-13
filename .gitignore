@@ -188,3 +188,6 @@ demo_visuals.log
 # Benchmarking outputs
 results/metrics/benchmark_results.json
 results/plots/benchmark_comparison.png
+
+# Agent Skills
+.agent/

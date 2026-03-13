@@ -3,27 +3,39 @@
 @tailwind utilities;
 
 :root {
-    background-color: #0f172a;
+    background-color: #020617; /* cyber-dark */
     color: #f8fafc;
 }
 
 body {
-    background-color: #0f172a;
-    /* Force dark background */
+    background-color: #020617;
+    background-image: 
+        linear-gradient(rgba(6, 182, 212, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(6, 182, 212, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    background-position: center center;
 }
 
 /* Glassmorphism Classes */
 .glass-panel {
-    @apply bg-slate-900/60 backdrop-blur-md border border-slate-700/50 rounded-xl p-4 shadow-lg;
-    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+    @apply bg-slate-950/80 backdrop-blur-xl border border-slate-800/80 rounded-xl p-5 relative overflow-hidden;
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.8), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+.glass-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.3), transparent);
 }
 
 .cyber-button {
-    @apply px-4 py-2 bg-slate-800 border border-cyber-cyan/50 text-cyber-cyan font-mono uppercase tracking-wider hover:bg-cyber-cyan/10 hover:shadow-neon transition-all duration-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none;
+    @apply px-4 py-2 bg-slate-900 border border-cyber-cyan/40 text-cyber-cyan font-mono tracking-widest uppercase transition-colors duration-200 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-slate-900 disabled:border-slate-800 disabled:text-slate-500 hover:bg-cyber-cyan/15 hover:border-cyber-cyan focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyber-cyan/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950;
+    text-shadow: 0 0 10px rgba(6, 182, 212, 0.2);
 }
 
 .cyber-input {
-    @apply bg-slate-950 border border-slate-700 text-cyan-400 font-mono p-2 rounded focus:outline-none focus:border-cyber-cyan focus:shadow-neon transition-all;
+    @apply bg-slate-950 border border-slate-800 text-cyan-400 font-mono p-2 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyber-cyan focus:border-cyber-cyan transition-colors duration-200;
 }
 
 /* Scrollbar */

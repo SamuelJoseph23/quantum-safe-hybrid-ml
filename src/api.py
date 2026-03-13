@@ -53,9 +53,7 @@ class PipelineState:
 
         # Training state
         self.current_round = 0
-        self.max_rounds = 10
         self.accuracy_history = []
-        self.training_complete = False
 
         # DP config
         self.dp_config = {
@@ -177,8 +175,6 @@ async def get_status():
         "status": "online" if pipeline.initialized else "loading",
         "threat_level": pipeline.threat_level,
         "round": pipeline.current_round,
-        "max_rounds": pipeline.max_rounds,
-        "training_complete": pipeline.training_complete,
         "accuracy_history": pipeline.accuracy_history,
         "epsilon": pipeline.dp_config["epsilon"],
         "num_clients": len(pipeline.clients),
@@ -191,7 +187,6 @@ async def reset_pipeline():
     """Reset training state (keeps data loaded)."""
     pipeline.current_round = 0
     pipeline.accuracy_history = []
-    pipeline.training_complete = False
     pipeline.threat_level = "LOW"
     pipeline.handshake_done = False
 
@@ -234,8 +229,6 @@ async def train_one_round():
     """Execute one REAL federated learning training round."""
     if not pipeline.initialized:
         raise HTTPException(status_code=503, detail="Pipeline not ready")
-    if pipeline.training_complete:
-        raise HTTPException(status_code=400, detail="Training already complete (10 rounds). Reset to train again.")
 
     pipeline.current_round += 1
     rnd = pipeline.current_round
@@ -256,12 +249,27 @@ async def train_one_round():
 
         # 2. Apply Differential Privacy
         if pipeline.dp_config["enabled"]:
-            final_W = client.apply_differential_privacy(
-                new_W, global_W, pipeline.dp_config["clipping_norm"]
-            )
-            final_b = client.apply_differential_privacy(
-                new_b, global_b, pipeline.dp_config["clipping_norm"]
-            )
+            # Properly scale DP delta by the number of samples so noise doesn't overpower the signal in multi-round runs
+            raw_delta_W = new_W - global_W
+            raw_delta_b = new_b - global_b
+            
+            # Clip delta
+            norm_W = np.linalg.norm(raw_delta_W)
+            if norm_W > pipeline.dp_config["clipping_norm"]:
+                raw_delta_W = raw_delta_W * (pipeline.dp_config["clipping_norm"] / norm_W)
+                
+            norm_b = np.linalg.norm(raw_delta_b)
+            if norm_b > pipeline.dp_config["clipping_norm"]:
+                raw_delta_b = raw_delta_b * (pipeline.dp_config["clipping_norm"] / norm_b)
+                
+            # Add noise and scale it down by sample size for Federated Averaging
+            client.dp_engine.set_sensitivity(pipeline.dp_config["clipping_norm"])
+            noisy_delta_W = client.dp_engine.add_noise(raw_delta_W, account=False)
+            noisy_delta_b = client.dp_engine.add_noise(raw_delta_b, account=False)
+            
+            final_W = global_W + (noisy_delta_W / len(X_local))
+            final_b = global_b + (noisy_delta_b / len(X_local))
+            
             client.account_privacy_step()
         else:
             final_W, final_b = new_W, new_b
@@ -305,9 +313,6 @@ async def train_one_round():
         "accuracy": round(accuracy, 4),
     })
 
-    if rnd >= pipeline.max_rounds:
-        pipeline.training_complete = True
-
     # Get a ciphertext snippet for display (encrypt a small sample)
     sample_weights = new_global["W"].flatten()[:3]
     he_mgr = pipeline.server.he_manager
@@ -320,24 +325,24 @@ async def train_one_round():
         "clients": client_logs,
         "encrypted_snippet": ct_snippet,
         "global_weights_sample": sample_weights.tolist(),
-        "training_complete": pipeline.training_complete,
         "accuracy_history": pipeline.accuracy_history,
     }
 
 
 @app.get("/api/train/auto")
 async def train_all_rounds():
-    """Run all remaining training rounds and return full results."""
+    """Run 10 more training rounds and return full results."""
     if not pipeline.initialized:
         raise HTTPException(status_code=503, detail="Pipeline not ready")
 
     results = []
-    while not pipeline.training_complete:
+    target_round = pipeline.current_round + 10
+    while pipeline.current_round < target_round:
         rnd_result = await train_one_round()
         results.append(rnd_result)
 
     return {
-        "msg": "Training complete",
+        "msg": "Batch training complete",
         "total_rounds": len(pipeline.accuracy_history),
         "final_accuracy": pipeline.accuracy_history[-1]["accuracy"],
         "accuracy_history": pipeline.accuracy_history,

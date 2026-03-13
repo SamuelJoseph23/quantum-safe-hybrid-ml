@@ -15,7 +15,9 @@ export default {
             'cyber-red': '#ef4444', // red-500
         },
         fontFamily: {
-            mono: ['"Fira Code"', 'monospace'],
+            sans: ['"Rajdhani"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+            display: ['"Orbitron"', 'sans-serif'],
         },
         boxShadow: {
             'neon': '0 0 5px theme("colors.cyber-cyan"), 0 0 20px theme("colors.cyber-cyan")',
