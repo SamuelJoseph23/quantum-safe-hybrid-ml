@@ -144,22 +144,19 @@ class FederatedServer:
 
     def _apply_aggregation(self, client_update: Dict[str, Any], num_samples: int) -> None:
         """
-        Plaintext aggregation (FedAvg-style) for backwards compatibility.
+        Plaintext Aggregation: Storing updates for Byzantine-Robust Median Aggregation.
         """
         if not client_update or num_samples <= 0:
             return
         
-        if not hasattr(self, "_agg_sum"):
-            self._agg_sum: Dict[str, np.ndarray] = {}
-            self._agg_count: float = 0.0
+        if not hasattr(self, "_plaintext_updates"):
+            self._plaintext_updates: Dict[str, list] = {}
         
         for name, value in client_update.items():
             value = np.array(value, dtype=float)
-            if name not in self._agg_sum:
-                self._agg_sum[name] = np.zeros_like(value, dtype=float)
-            self._agg_sum[name] += value * num_samples
-        
-        self._agg_count += num_samples
+            if name not in self._plaintext_updates:
+                self._plaintext_updates[name] = []
+            self._plaintext_updates[name].append(value)
 
     def finalize_round(self) -> Dict[str, np.ndarray]:
         """
@@ -170,18 +167,17 @@ class FederatedServer:
             new_global = self.he_aggregator.aggregate_and_decrypt(self.param_shapes)
             self.global_model = new_global
         else:
-            # Plaintext Mode
-            if not hasattr(self, "_agg_sum") or self._agg_count == 0:
+            # Plaintext Mode: Byzantine Robust Median Aggregation
+            if not hasattr(self, "_plaintext_updates") or not self._plaintext_updates:
                 return self.global_model
             
             new_global: Dict[str, np.ndarray] = {}
-            for name, total in self._agg_sum.items():
-                new_global[name] = total / self._agg_count
+            for name, updates in self._plaintext_updates.items():
+                # Multi-dimensional median element-wise eliminates outlier (Byzantine) updates
+                new_global[name] = np.median(updates, axis=0)
             
             self.global_model = new_global
-            
-            del self._agg_sum
-            self._agg_count = 0.0
+            self._plaintext_updates = {}
         
         print("[OK] Global model updated for this round")
         return self.global_model

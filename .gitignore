@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.so
 .Python
+env/
 build/
 develop-eggs/
 dist/
@@ -15,40 +16,34 @@ lib64/
 parts/
 sdist/
 var/
-wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Virtual Environment
+# Virtual Environments
 venv/
+.venv/
 env/
-ENV/
-env.bak/
-venv.bak/
+.env/
 
-# PyCharm
-.idea/
-*.iml
-*.iws
-.idea_modules/
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+web-gui/dist/
+web-gui/.DS_Store
 
-# VS Code
-.vscode/
-*.code-workspace
+# Results & Models
+results/models/*.npz
+results/metrics/*.json
+results/plots/*.png
+!results/.gitkeep
 
-# Jupyter Notebook
-.ipynb_checkpoints
-*.ipynb
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# Operating System
+# OS generated files
 .DS_Store
 .DS_Store?
 ._*
@@ -56,138 +51,17 @@ venv.bak/
 .Trashes
 ehthumbs.db
 Thumbs.db
-desktop.ini
 
-# Data (large datasets should not be committed)
-data/raw/
-data/processed/
-*.csv
-*.h5
-*.hdf5
-*.pkl
-*.pickle
-
-# Model Files (large trained models)
-*.pt
-*.pth
-*.h5
-*.ckpt
-*.safetensors
-results/models/*.npz
-results/models/*.h5
-
-# Logs
-*.log
-logs/
-*.out
-
-# Results (optional - keep structure but not actual files)
-results/metrics/*.json
-results/plots/*.png
-results/plots/*.pdf
-!results/metrics/.gitkeep
-!results/models/.gitkeep
-!results/plots/.gitkeep
-
-# Temporary files
-*.tmp
-*.temp
+# IDEs
+.idea/
+.vscode/
 *.swp
-*.swo
-*~
 
-# Cache
-.cache/
-*.cache
-
-# Coverage reports
-htmlcov/
-.tox/
-.coverage
-.coverage.*
-.pytest_cache/
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# Cryptographic Keys (IMPORTANT - never commit real keys!)
-*.pem
-*.key
-*.crt
-*.p12
-*.pfx
-keys/
-secrets/
-
-# Scikit-learn data cache
-scikit_learn_data/
-
-# Tenseal/HE cache
-tenseal_cache/
-
-# Large files (Git LFS should be used for these if needed)
-*.bin
-*.dat
-*.db
-*.sqlite
-*.sqlite3
-
-# Backup files
-*.bak
-*.backup
-*~
-
-# Compiled extensions
-*.dll
-*.dylib
-
-# Distribution / packaging
-.Python
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage
-.pytest_cache/
-.coverage
-htmlcov/
-coverage.xml
-nosetests.xml
-
-# Web GUI (Node.js/Vite)
-web-gui/node_modules/
-web-gui/dist/
-web-gui/.env
-web-gui/.env.local
-web-gui/*.local
-web-gui/.npm
-web-gui/package-lock.json
-
-# Project Specific (Presentation & Logs)
-training_logs.txt
-presentation_report.txt
-demo_visuals.log
-*.webp
-*.png
-!README.md
-
-# Benchmarking outputs
-results/metrics/benchmark_results.json
-results/plots/benchmark_comparison.png
-
-# Agent Skills
+# Agent / LLM Files
 .agent/
+.agents/
+_agent/
+_agents/
+*.sfd
+*.ttx
+*.png

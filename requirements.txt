@@ -18,6 +18,7 @@ colorama>=0.4.6
 # Web API
 fastapi>=0.100.0
 uvicorn>=0.23.0
+websockets>=11.0.3
 
 # Dev / Tests
 pytest>=7.4.0

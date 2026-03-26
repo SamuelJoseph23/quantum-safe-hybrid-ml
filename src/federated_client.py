@@ -95,6 +95,23 @@ class FederatedClient:
         if self.use_dp:
             self.dp_engine.account_step()
 
+    def reset_privacy_budget(self) -> None:
+        """
+        Reset the client's privacy accounting.
+        """
+        if self.use_dp:
+            self.dp_engine.privacy_spent = 0.0
+            self.dp_engine.rounds_executed = 0
+
+    def set_privacy_budget(self, epsilon: float) -> None:
+        """
+        Update local DP epsilon and rescale noise mechanisms.
+        """
+        if self.use_dp:
+            self.dp_engine.epsilon = epsilon
+            self.dp_engine.scale = self.dp_engine._calculate_scale()
+
+
     def secure_send_update(self, model_update: Dict[str, Any],
                           server_kyber_pk: str,
                           session_key: Optional[bytes] = None,

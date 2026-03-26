@@ -8,6 +8,7 @@ import {
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
+const WS_BASE = 'ws://127.0.0.1:8000/ws';
 
 const App = () => {
   const [logs, setLogs] = useState([]);
@@ -18,12 +19,7 @@ const App = () => {
   const [accuracyHistory, setAccuracyHistory] = useState([]);
   const [isTraining, setIsTraining] = useState(false);
   const [encryptedSnippet, setEncryptedSnippet] = useState(null);
-  const [globalWeightsSample, setGlobalWeightsSample] = useState(null);
-  const [clientStatuses, setClientStatuses] = useState([
-    { client_id: 'client_1', status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0 },
-    { client_id: 'client_2', status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0 },
-    { client_id: 'client_3', status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0 },
-  ]);
+  const [clientStatuses, setClientStatuses] = useState([]);
   const [serverAggregating, setServerAggregating] = useState(false);
   const [apiReady, setApiReady] = useState(false);
   const [attackActive, setAttackActive] = useState(null); // 'mitm' | 'quantum' | null
@@ -31,9 +27,77 @@ const App = () => {
 
   const scrollRef = useRef(null);
 
+  const addLog = (msg, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev.slice(-39), { timestamp, msg, type }]);
+  };
+
   useEffect(() => {
-    const interval = setInterval(fetchStatus, 3000);
-    return () => clearInterval(interval);
+    // Initial fetch to get status & dynamic client count
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/status`);
+        const data = await res.json();
+        setThreatLevel(data.threat_level);
+        setCurrentRound(data.round);
+        if (data.accuracy_history?.length > 0) setAccuracyHistory(data.accuracy_history);
+        if (data.status === 'online') {
+            setApiReady(true);
+            setEpsilon(data.epsilon);
+            // Dynamic client mapping based on num_clients
+            if (clientStatuses.length === 0 && data.num_clients > 0) {
+              const clients = Array.from({ length: data.num_clients }).map((_, i) => ({
+                client_id: `client_${i + 1}`, status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0
+              }));
+              setClientStatuses(clients);
+            }
+        }
+      } catch (e) { /* backend not up */ }
+    };
+    fetchStatus();
+
+    // Setup WebSocket
+    const ws = new WebSocket(WS_BASE);
+    
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'round_start') {
+        addLog(`--- Round ${msg.round} ---`, 'info');
+      } else if (msg.type === 'client_status') {
+        setClientStatuses(prev => prev.map(c => ({ ...c, status: msg.status })));
+      } else if (msg.type === 'server_aggregating') {
+        setServerAggregating(true);
+      } else if (msg.type === 'round_complete') {
+        const data = msg.data;
+        setCurrentRound(data.round);
+        setAccuracyHistory(data.accuracy_history);
+        setEncryptedSnippet(data.encrypted_snippet);
+        setServerAggregating(false);
+        setClientStatuses(data.clients.map(c => ({
+          ...c,
+          status: 'READY',
+        })));
+        data.clients.forEach(c => {
+          addLog(`[${c.client_id}] ${c.num_samples} samples | Acc: ${(c.local_accuracy * 100).toFixed(1)}% | DP: ${c.privacy_spent}`, 'info');
+        });
+        addLog(`Server aggregated (Paillier HE, blindfolded).`, 'warn');
+        addLog(`Round ${data.round} Global Accuracy: ${(data.accuracy * 100).toFixed(2)}%`, 'success');
+      } else if (msg.type === 'training_done') {
+        setIsTraining(false);
+      } else if (msg.type === 'reset') {
+        setHandshake(null);
+        setAccuracyHistory([]);
+        setCurrentRound(0);
+        setEncryptedSnippet(null);
+        setClientStatuses(prev => prev.map(c => ({
+            ...c, status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0
+        })));
+        setLogs([]);
+        addLog("Pipeline reset. Ready for new training.", 'success');
+      }
+    };
+    
+    return () => ws.close();
   }, []);
 
   useEffect(() => {
@@ -41,22 +105,6 @@ const App = () => {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [logs]);
-
-  const addLog = (msg, type = 'info') => {
-    const timestamp = new Date().toLocaleTimeString();
-    setLogs(prev => [...prev.slice(-39), { timestamp, msg, type }]);
-  };
-
-  const fetchStatus = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/status`);
-      const data = await res.json();
-      setThreatLevel(data.threat_level);
-      setCurrentRound(data.round);
-      if (data.accuracy_history?.length > 0) setAccuracyHistory(data.accuracy_history);
-      if (data.status === 'online') setApiReady(true);
-    } catch (e) { /* backend not up */ }
-  };
 
   const runHandshake = async () => {
     addLog("Initiating Kyber-768 Handshake...", 'info');
@@ -76,74 +124,23 @@ const App = () => {
 
   const trainOneRound = async () => {
     if (!handshake) { addLog("No Secure Channel! Initiate Handshake first.", 'error'); return; }
-
     setIsTraining(true);
-    const nextRound = currentRound + 1;
-    addLog(`--- Round ${nextRound} ---`, 'info');
-
-    // Animate: clients training
-    setClientStatuses(prev => prev.map(c => ({ ...c, status: 'TRAINING' })));
-    await sleep(400);
-
-    // Animate: clients sending
-    setClientStatuses(prev => prev.map(c => ({ ...c, status: 'ENCRYPTING' })));
-    await sleep(400);
-
     try {
-      const res = await fetch(`${API_BASE}/train/round`);
-      const data = await res.json();
-
-      // Animate: clients sent, server aggregating
-      setClientStatuses(data.clients.map(c => ({ ...c, status: 'SENT' })));
-      setServerAggregating(true);
-      await sleep(600);
-
-      // Update state
-      setCurrentRound(data.round);
-      setAccuracyHistory(data.accuracy_history);
-      setEncryptedSnippet(data.encrypted_snippet);
-      setGlobalWeightsSample(data.global_weights_sample);
-      setServerAggregating(false);
-
-      // Update client statuses from API response
-      setClientStatuses(data.clients.map(c => ({
-        ...c,
-        status: 'READY',
-      })));
-
-      // Logs
-      data.clients.forEach(c => {
-        addLog(`[${c.client_id}] ${c.num_samples} samples | Acc: ${(c.local_accuracy * 100).toFixed(1)}% | DP: ${c.privacy_spent}`, 'info');
-      });
-      addLog(`Server aggregated (Paillier HE, blindfolded).`, 'warn');
-      addLog(`Round ${data.round} Global Accuracy: ${(data.accuracy * 100).toFixed(2)}%`, 'success');
+      await fetch(`${API_BASE}/train/round`); // Async kickoff via background task
     } catch (e) {
-      addLog("Training round failed.", 'error');
-      setServerAggregating(false);
-    } finally {
+      addLog("Training request failed.", 'error');
       setIsTraining(false);
     }
   };
 
   const trainAllRounds = async () => {
     if (!handshake) { addLog("No Secure Channel! Initiate Handshake first.", 'error'); return; }
-
     setIsTraining(true);
-    addLog("Running 10 rounds...", 'info');
-    setClientStatuses(prev => prev.map(c => ({ ...c, status: 'TRAINING' })));
-
+    addLog("Initiating batch of 10 rounds...", 'info');
     try {
-      const res = await fetch(`${API_BASE}/train/auto`);
-      const data = await res.json();
-
-      setAccuracyHistory(data.accuracy_history);
-      setCurrentRound(data.total_rounds);
-      setClientStatuses(prev => prev.map(c => ({ ...c, status: 'READY' })));
-
-      addLog(`${data.msg}. Final Accuracy: ${(data.final_accuracy * 100).toFixed(2)}%`, 'success');
+      await fetch(`${API_BASE}/train/auto`); // Async kickoff via background task
     } catch (e) {
-      addLog("Auto-training failed.", 'error');
-    } finally {
+      addLog("Auto-training request failed.", 'error');
       setIsTraining(false);
     }
   };
@@ -151,18 +148,6 @@ const App = () => {
   const resetPipeline = async () => {
     try {
       await fetch(`${API_BASE}/reset`, { method: 'POST' });
-      setHandshake(null);
-      setAccuracyHistory([]);
-      setCurrentRound(0);
-      setEncryptedSnippet(null);
-      setGlobalWeightsSample(null);
-      setClientStatuses([
-        { client_id: 'client_1', status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0 },
-        { client_id: 'client_2', status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0 },
-        { client_id: 'client_3', status: 'IDLE', num_samples: 0, local_accuracy: 0, privacy_spent: 0 },
-      ]);
-      setLogs([]);
-      addLog("Pipeline reset. Ready for new training.", 'success');
     } catch (e) {
       addLog("Reset failed.", 'error');
     }
@@ -180,39 +165,29 @@ const App = () => {
   };
 
   const triggerAttack = async (type) => {
-    if (attackActive) return; // prevent double-trigger
+    if (attackActive) return;
 
     if (type === 'mitm') {
-      // === MITM ATTACK SEQUENCE ===
       setAttackActive('mitm');
       setThreatLevel('HIGH');
-
-      // Phase 1: Attacker detected
       setAttackPhase('detecting');
       addLog('[ALERT] ANOMALOUS PACKET DETECTED ON NETWORK...', 'error');
-      setClientStatuses(prev => prev.map((c, i) =>
-        i === 1 ? { ...c, status: 'COMPROMISED' } : c
-      ));
+      setClientStatuses(prev => prev.map((c, i) => i === 1 ? { ...c, status: 'COMPROMISED' } : c));
       await sleep(1500);
 
-      // Phase 2: Interception attempt
       setAttackPhase('intercepted');
       addLog('[ATTACK] MITM ATTACKER INTERCEPTING CLIENT_2 UPDATE...', 'error');
       addLog('[ATTACK] Attempting to inject poisoned model weights...', 'error');
       await sleep(2000);
 
-      // Phase 3: Dilithium blocks it
       setAttackPhase('blocked');
       addLog('[DEFENSE] DILITHIUM SIGNATURE VERIFICATION FAILED!', 'warn');
       addLog('[DEFENSE] Tampered payload REJECTED. Attack neutralized.', 'success');
       addLog('[DEFENSE] All client signatures re-verified. Network SECURE.', 'success');
       setThreatLevel('LOW');
-      setClientStatuses(prev => prev.map(c => ({
-        ...c, status: c.status === 'COMPROMISED' ? 'BLOCKED' : c.status
-      })));
+      setClientStatuses(prev => prev.map(c => ({ ...c, status: c.status === 'COMPROMISED' ? 'BLOCKED' : c.status })));
       await sleep(2500);
 
-      // Reset
       setAttackActive(null);
       setAttackPhase('');
       setClientStatuses(prev => prev.map(c => ({
@@ -220,44 +195,39 @@ const App = () => {
       })));
 
     } else if (type === 'quantum') {
-      // === QUANTUM ATTACK SEQUENCE ===
       setAttackActive('quantum');
       setThreatLevel('CRITICAL');
-
-      // Phase 1: Quantum threat detected
       setAttackPhase('breach');
       addLog('[CRITICAL] QUANTUM COMPUTING WAVEFRONT DETECTED!', 'error');
       addLog('[CRITICAL] Shor\'s algorithm targeting Kyber key exchange...', 'error');
       await sleep(2000);
 
-      // Phase 2: Key rotation
       setAttackPhase('rotating');
       addLog('[DEFENSE] INITIATING EMERGENCY KEY ROTATION...', 'warn');
       addLog('[DEFENSE] Generating fresh ML-KEM-768 keypairs...', 'warn');
-      addLog('[DEFENSE] Re-encapsulating session keys for all 3 clients...', 'warn');
+      addLog('[DEFENSE] Re-encapsulating session keys...', 'warn');
       await sleep(2500);
 
-      // Phase 3: Secured
       setAttackPhase('secured');
       addLog('[DEFENSE] All keys rotated successfully.', 'success');
       addLog('[DEFENSE] Post-quantum encryption intact. Attack DEFEATED.', 'success');
       setThreatLevel('LOW');
       await sleep(2000);
 
-      // Reset
       setAttackActive(null);
       setAttackPhase('');
     }
 
-    // Also call the backend
     try {
       await fetch(`${API_BASE}/attack/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ attack_type: type })
       });
-    } catch (e) { /* optional backend call */ }
+    } catch (e) { /* ignore */ }
   };
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   return (
     <div className={`min-h-screen font-sans selection:bg-cyber-cyan selection:text-cyber-dark p-6 transition-colors duration-500 ${attackActive === 'mitm' ? 'bg-red-950/20' :
@@ -270,7 +240,7 @@ const App = () => {
       <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-cyber-green/5 blur-[120px] pointer-events-none rounded-full" />
 
       {/* Main Container */}
-      <div className="max-w-[1600px] mx-auto relative z-10 flex flex-col h-full">
+      <div className="max-w-[1700px] mx-auto relative z-10 flex flex-col h-full">
       <AnimatePresence>
         {attackActive && (
           <motion.div
@@ -279,10 +249,7 @@ const App = () => {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center"
           >
-            {/* Scanline effect */}
             <div className="absolute inset-0 bg-gradient-to-b from-transparent via-red-500/5 to-transparent animate-pulse" />
-
-            {/* Alert Banner */}
             <motion.div
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -307,10 +274,10 @@ const App = () => {
               </div>
               <div className="text-center font-mono text-sm mt-2 text-slate-300">
                 {attackPhase === 'detecting' && 'Dilithium signature verification in progress...'}
-                {attackPhase === 'intercepted' && 'Poisoned weights detected in client_2 update'}
-                {attackPhase === 'blocked' && 'ML-DSA-44 signature mismatch -- payload rejected'}
+                {attackPhase === 'intercepted' && 'Poisoned weights detected'}
+                {attackPhase === 'blocked' && 'ML-DSA signature mismatch -- payload rejected'}
                 {attackPhase === 'breach' && "Shor's algorithm targeting key exchange"}
-                {attackPhase === 'rotating' && 'Generating fresh ML-KEM-768 keypairs for all clients'}
+                {attackPhase === 'rotating' && 'Generating fresh ML-KEM-768 keypairs'}
                 {attackPhase === 'secured' && 'Post-quantum encryption intact'}
               </div>
             </motion.div>
@@ -330,12 +297,9 @@ const App = () => {
           </div>
         </div>
         <div className="flex gap-6 items-center">
-          <StatusBadge label="ROUND PROGRESS" value={currentRound}
-            color={'text-cyber-cyan'} />
-          <StatusBadge label="THREAT DETECTED" value={threatLevel}
-            color={threatLevel === 'LOW' ? 'text-cyber-green' : 'text-cyber-red animate-pulse'} />
-          <StatusBadge label="CHANNEL" value={handshake ? "KYBER-768" : "UNSECURED"}
-            color={handshake ? 'text-cyber-cyan' : 'text-slate-500'} />
+          <StatusBadge label="ROUND PROGRESS" value={currentRound} color={'text-cyber-cyan'} />
+          <StatusBadge label="THREAT DETECTED" value={threatLevel} color={threatLevel === 'LOW' ? 'text-cyber-green' : 'text-cyber-red animate-pulse'} />
+          <StatusBadge label="CHANNEL" value={handshake ? "KYBER-768" : "UNSECURED"} color={handshake ? 'text-cyber-cyan' : 'text-slate-500'} />
           <button onClick={resetPipeline} className="cyber-button flex items-center gap-1 text-xs py-1 px-3">
             <RotateCcw className="w-3 h-3" /> RESET
           </button>
@@ -400,42 +364,30 @@ const App = () => {
         </div>
 
         {/* MIDDLE COL: FEDERATION + CHART */}
-        <div className="col-span-12 lg:col-span-6 space-y-5 flex flex-col">
-
+        <div className="col-span-12 lg:col-span-6 space-y-5 flex flex-col overflow-hidden">
           {/* FEDERATION TOPOLOGY */}
-          <div className="glass-panel">
+          <div className="glass-panel overflow-x-auto custom-scrollbar">
             <h2 className="text-cyber-cyan font-mono text-xs mb-3 flex items-center gap-2">
               <Activity className="w-3 h-3" /> FEDERATED NETWORK
             </h2>
-
-            <div className="flex items-start justify-center gap-6">
-              {/* 3 CLIENT NODES */}
+            <div className="flex items-start justify-center gap-6 min-w-max pb-4">
               {clientStatuses.map((client, idx) => (
-                <ClientNode key={client.client_id} client={client} index={idx} attackActive={attackActive} attackPhase={attackPhase} />
+                <ClientNode key={client.client_id} client={client} index={idx} attackActive={attackActive} />
               ))}
             </div>
 
             {/* ARROWS: Clients → Server */}
             <div className="flex justify-center my-2">
-              <div className="flex gap-16">
+              <div className="flex gap-16 min-w-max">
                 {clientStatuses.map((c, i) => (
                   <motion.div key={i}
-                    animate={c.status === 'ENCRYPTING' || c.status === 'SENT' ? {
-                      opacity: [0.3, 1, 0.3], y: [0, 4, 0]
-                    } : {}}
+                    animate={c.status === 'ENCRYPTING' || c.status === 'SENT' ? { opacity: [0.3, 1, 0.3], y: [0, 4, 0] } : {}}
                     transition={{ duration: 0.8, repeat: c.status === 'ENCRYPTING' ? Infinity : 0 }}
                     className="flex flex-col items-center"
                   >
-                    <ArrowDown className={`w-4 h-4 ${c.status === 'ENCRYPTING' ? 'text-yellow-400' :
-                      c.status === 'SENT' ? 'text-cyber-green' :
-                        'text-slate-700'
-                      }`} />
-                    <span className={`text-[8px] font-mono mt-0.5 ${c.status === 'ENCRYPTING' ? 'text-yellow-400' :
-                      c.status === 'SENT' ? 'text-cyber-green' :
-                        'text-slate-700'
-                      }`}>
-                      {c.status === 'ENCRYPTING' ? 'HE+PQC' :
-                        c.status === 'SENT' ? 'SENT' : 'IDLE'}
+                    <ArrowDown className={`w-4 h-4 ${c.status === 'ENCRYPTING' ? 'text-yellow-400' : c.status === 'SENT' ? 'text-cyber-green' : 'text-slate-700'}`} />
+                    <span className={`text-[8px] font-mono mt-0.5 ${c.status === 'ENCRYPTING' ? 'text-yellow-400' : c.status === 'SENT' ? 'text-cyber-green' : 'text-slate-700'}`}>
+                      {c.status === 'ENCRYPTING' ? 'HE+PQC' : c.status === 'SENT' ? 'SENT' : 'IDLE'}
                     </span>
                   </motion.div>
                 ))}
@@ -443,7 +395,7 @@ const App = () => {
             </div>
 
             {/* SERVER NODE */}
-            <div className="flex justify-center">
+            <div className="flex justify-center mt-2">
               <ServerNode aggregating={serverAggregating}
                 accuracy={accuracyHistory.length > 0 ? accuracyHistory[accuracyHistory.length - 1].accuracy : null}
                 round={currentRound} attackActive={attackActive} attackPhase={attackPhase} />
@@ -451,7 +403,7 @@ const App = () => {
           </div>
 
           {/* ACCURACY CHART */}
-          <div className="glass-panel flex-1 relative overflow-hidden">
+          <div className="glass-panel flex-1 relative overflow-hidden min-h-[250px]">
             <h2 className="text-cyber-cyan font-mono text-xs mb-2 flex items-center gap-2">
               <Activity className="w-3 h-3" /> GLOBAL MODEL ACCURACY
             </h2>
@@ -461,15 +413,12 @@ const App = () => {
                 <LineChart data={accuracyHistory}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis dataKey="round" stroke="#64748b" fontSize={10} tickFormatter={(v) => `R${v}`} />
-                  <YAxis stroke="#64748b" fontSize={10} domain={[0.5, 0.85]}
-                    tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
+                  <YAxis stroke="#64748b" fontSize={10} domain={['auto', 'auto']} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
                   <Tooltip
                     contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #22d3ee', borderRadius: '8px', fontSize: '11px' }}
                     labelFormatter={(v) => `Round ${v}`}
                     formatter={(v) => [`${(v * 100).toFixed(2)}%`, 'Accuracy']} />
-                  <Line type="monotone" dataKey="accuracy" stroke="#22d3ee" strokeWidth={2}
-                    dot={{ r: 4, fill: '#22d3ee', stroke: '#0f172a', strokeWidth: 2 }}
-                    activeDot={{ r: 6, fill: '#22d3ee' }} />
+                  <Line type="monotone" dataKey="accuracy" stroke="#22d3ee" strokeWidth={2} dot={{ r: 4, fill: '#22d3ee', stroke: '#0f172a', strokeWidth: 2 }} activeDot={{ r: 6, fill: '#22d3ee' }} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
@@ -482,16 +431,12 @@ const App = () => {
           {/* ACTION BAR */}
           <div className="glass-panel flex gap-3">
             <button onClick={trainOneRound} disabled={isTraining}
-              className="flex-1 py-3 bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan font-bold rounded
-                hover:bg-cyber-cyan hover:text-slate-900 transition-all tracking-widest text-sm
-                disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              className="flex-1 py-3 bg-cyber-cyan/10 border border-cyber-cyan text-cyber-cyan font-bold rounded hover:bg-cyber-cyan hover:text-slate-900 transition-all tracking-widest text-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               <Play className="w-4 h-4" />
               {isTraining ? "TRAINING..." : "RUN 1 ROUND"}
             </button>
             <button onClick={trainAllRounds} disabled={isTraining}
-              className="flex-1 py-3 bg-cyber-green/10 border border-cyber-green text-cyber-green font-bold rounded
-                hover:bg-cyber-green hover:text-slate-900 transition-all tracking-widest text-sm
-                disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              className="flex-1 py-3 bg-cyber-green/10 border border-cyber-green text-cyber-green font-bold rounded hover:bg-cyber-green hover:text-slate-900 transition-all tracking-widest text-sm disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
               <Zap className="w-4 h-4" />
               RUN 10 ROUNDS
             </button>
@@ -503,7 +448,7 @@ const App = () => {
           <h2 className="text-slate-400 font-mono text-xs mb-3 flex items-center gap-2 border-b border-slate-700/50 pb-2">
             <TerminalIcon className="w-3 h-3" /> SECURE TERMINAL LOGS
           </h2>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-2 pr-2">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto font-mono text-[11px] leading-relaxed space-y-2 pr-2 custom-scrollbar">
             {logs.length === 0 && <span className="text-slate-600 animate-pulse">Waiting for system events...</span>}
             {logs.map((log, i) => (
               <div key={i} className={`flex gap-3 ${
@@ -517,18 +462,14 @@ const App = () => {
             ))}
           </div>
         </div>
-
       </main>
       </div>
     </div>
   );
 };
 
-
 // ─── Client Node ──────────────────────────────────────────────
-const ClientNode = ({ client, index, attackActive, attackPhase }) => {
-  const labels = ['Hospital A', 'Bank B', 'Agency C'];
-
+const ClientNode = ({ client, index, attackActive }) => {
   const isCompromised = client.status === 'COMPROMISED';
   const isBlocked = client.status === 'BLOCKED';
 
@@ -563,13 +504,13 @@ const ClientNode = ({ client, index, attackActive, attackPhase }) => {
         duration: isCompromised ? 0.3 : 0.6,
         repeat: isCompromised || client.status === 'TRAINING' ? Infinity : 0
       }}
-      className={`relative rounded-lg border px-4 py-3 w-44 ${colors[client.status] || colors.IDLE} ${bgColors[client.status] || bgColors.IDLE}`}
+      className={`relative rounded-lg border px-4 py-3 w-[170px] shrink-0 ${colors[client.status] || colors.IDLE} ${bgColors[client.status] || bgColors.IDLE}`}
     >
       <div className="flex items-center gap-2 mb-2">
         <Monitor className={`w-4 h-4 ${isCompromised ? 'text-red-400' : ''}`} />
-        <div>
-          <div className="text-xs font-bold font-mono">{labels[index]}</div>
-          <div className="text-[9px] font-mono opacity-60">{client.client_id}</div>
+        <div className="truncate">
+          <div className="text-xs font-bold font-mono">Node {index + 1}</div>
+          <div className="text-[9px] font-mono opacity-60 truncate">{client.client_id}</div>
         </div>
       </div>
 
@@ -600,7 +541,6 @@ const ClientNode = ({ client, index, attackActive, attackPhase }) => {
         )}
       </div>
 
-      {/* Pulse indicators */}
       {(client.status === 'TRAINING' || client.status === 'ENCRYPTING') && (
         <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-yellow-400 animate-ping" />
       )}
@@ -616,7 +556,6 @@ const ClientNode = ({ client, index, attackActive, attackPhase }) => {
     </motion.div>
   );
 };
-
 
 // ─── Server Node ──────────────────────────────────────────────
 const ServerNode = ({ aggregating, accuracy, round, attackActive, attackPhase }) => {
@@ -672,7 +611,6 @@ const ServerNode = ({ aggregating, accuracy, round, attackActive, attackPhase })
   );
 };
 
-
 // ─── Status Badge ─────────────────────────────────────────────
 const StatusBadge = ({ label, value, color }) => (
   <div className="text-right border-r border-slate-700/50 pr-6 last:border-0 last:pr-0">
@@ -680,9 +618,5 @@ const StatusBadge = ({ label, value, color }) => (
     <div className={`text-base font-mono font-bold tracking-wider tabular-nums ${color}`}>{value}</div>
   </div>
 );
-
-
-// ─── Helpers ──────────────────────────────────────────────────
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 export default App;

@@ -1,17 +1,19 @@
 """
 Cyber-SOC Backend API
 FastAPI app serving the REAL Quantum-Safe Federated Learning pipeline.
-Loads actual data, trains a real model, and reports live accuracy.
+Loads actual data, trains a real model, and reports live accuracy via WebSockets.
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import numpy as np
 import sys
 import os
 import time
+import asyncio
+import json
 
-# Add current directory to sys.path to ensure local imports work
+# Add current directory to sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Import core modules
@@ -36,6 +38,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# WebSocket Manager
+# ---------------------------------------------------------------------------
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+ws_manager = ConnectionManager()
 
 # ---------------------------------------------------------------------------
 # Global State
@@ -54,6 +79,7 @@ class PipelineState:
         # Training state
         self.current_round = 0
         self.accuracy_history = []
+        self.is_training = False
 
         # DP config
         self.dp_config = {
@@ -66,16 +92,14 @@ class PipelineState:
         self.threat_level = "LOW"
         self.handshake_done = False
 
-        # PQC modules (for handshake demo)
+        # PQC modules
         self.pqc_channel = PQCSecureChannel(security_level=2)
         self.pqc_auth = PQCAuthenticator(security_level=2)
 
-
 pipeline = PipelineState()
 
-
 # ---------------------------------------------------------------------------
-# Helper: sklearn train + evaluate (same logic as main.py)
+# Helper: sklearn train + evaluate
 # ---------------------------------------------------------------------------
 def train_local_model(global_W, global_b, X_local, y_local):
     clf = SGDClassifier(
@@ -90,7 +114,6 @@ def train_local_model(global_W, global_b, X_local, y_local):
     clf.partial_fit(X_local, y_local)
     return clf.coef_, clf.intercept_
 
-
 def evaluate_model(weights, intercept, X_test, y_test):
     clf = SGDClassifier(loss="log_loss", random_state=42)
     clf.partial_fit(X_test[0:1], y_test[0:1], classes=np.array([0, 1]))
@@ -98,9 +121,8 @@ def evaluate_model(weights, intercept, X_test, y_test):
     clf.intercept_ = np.array(intercept).reshape(1,)
     return float(accuracy_score(y_test, clf.predict(X_test)))
 
-
 # ---------------------------------------------------------------------------
-# Startup: Load data + initialize FL pipeline
+# Startup
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def startup_load_pipeline():
@@ -146,7 +168,6 @@ async def startup_load_pipeline():
     pipeline.initialized = True
     print(f"[API] Pipeline ready. {NUM_CLIENTS} clients, {pipeline.n_features} features.")
 
-
 # ---------------------------------------------------------------------------
 # Pydantic Models
 # ---------------------------------------------------------------------------
@@ -156,19 +177,26 @@ class HandshakeResponse(BaseModel):
     session_key: str
     status: str
 
-
 class PrivacyConfig(BaseModel):
     epsilon: float
-
 
 class AttackRequest(BaseModel):
     attack_type: str
     parameter: str = ""
 
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive, wait for client messages if any
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+
 @app.get("/api/status")
 async def get_status():
     return {
@@ -181,41 +209,34 @@ async def get_status():
         "num_features": pipeline.n_features,
     }
 
-
 @app.post("/api/reset")
 async def reset_pipeline():
-    """Reset training state (keeps data loaded)."""
     pipeline.current_round = 0
     pipeline.accuracy_history = []
     pipeline.threat_level = "LOW"
     pipeline.handshake_done = False
 
-    # Re-initialize server model
     initial_model = {
         "W": np.zeros((1, pipeline.n_features), dtype=float),
         "b": np.zeros((1,), dtype=float),
     }
     pipeline.server.set_initial_model(initial_model)
 
-    # Reset client DP budgets and counters
     for client in pipeline.clients:
         if client.use_dp:
-            client.dp_engine.privacy_spent = 0.0
-            client.dp_engine.rounds_executed = 0
+            client.reset_privacy_budget()
         pipeline.registry_info[client.client_id]["counter"] = 0
         pipeline.registry_info[client.client_id]["session_key"] = None
 
+    await ws_manager.broadcast({"type": "reset"})
     return {"msg": "Pipeline reset. Ready for new training."}
-
 
 @app.get("/api/handshake", response_model=HandshakeResponse)
 async def run_handshake():
-    """Perform a real Kyber-768 Key Exchange."""
     server_keys = pipeline.pqc_channel.server_generate_keypair()
     encaps = pipeline.pqc_channel.client_encapsulate(server_keys["public_key"])
 
     pipeline.handshake_done = True
-
     return {
         "public_key": server_keys["public_key"][:64] + "...",
         "ciphertext": encaps["ciphertext"][:64] + "...",
@@ -223,160 +244,181 @@ async def run_handshake():
         "status": "SECURE_KYBER_768",
     }
 
+async def _train_loop(rounds: int):
+    """Background task to run FL rounds and emit WS events."""
+    pipeline.is_training = True
+    X_test, y_test = pipeline.test_data
+
+    try:
+        for r in range(rounds):
+            pipeline.current_round += 1
+            rnd = pipeline.current_round
+
+            await asyncio.sleep(0.5)
+            await ws_manager.broadcast({"type": "round_start", "round": rnd})
+
+            global_params = pipeline.server.get_global_model()
+            global_W = global_params["W"]
+            global_b = global_params["b"]
+
+            client_logs = []
+
+            # Simulate Training Phase
+            await asyncio.sleep(0.5)
+            await ws_manager.broadcast({"type": "client_status", "status": "TRAINING"})
+
+            local_updates = []
+            for i, client in enumerate(pipeline.clients):
+                cid = client.client_id
+                X_local, y_local = pipeline.client_data[i]
+
+                new_W, new_b = train_local_model(global_W, global_b, X_local, y_local)
+
+                if pipeline.dp_config["enabled"]:
+                    raw_delta_W = new_W - global_W
+                    raw_delta_b = new_b - global_b
+                    
+                    norm_W = np.linalg.norm(raw_delta_W)
+                    if norm_W > pipeline.dp_config["clipping_norm"]:
+                        raw_delta_W = raw_delta_W * (pipeline.dp_config["clipping_norm"] / norm_W)
+                        
+                    norm_b = np.linalg.norm(raw_delta_b)
+                    if norm_b > pipeline.dp_config["clipping_norm"]:
+                        raw_delta_b = raw_delta_b * (pipeline.dp_config["clipping_norm"] / norm_b)
+                        
+                    client.dp_engine.set_sensitivity(pipeline.dp_config["clipping_norm"])
+                    noisy_delta_W = client.dp_engine.add_noise(raw_delta_W, account=False)
+                    noisy_delta_b = client.dp_engine.add_noise(raw_delta_b, account=False)
+                    
+                    # Direct LDP update without scaling down by local sample size
+                    final_W = global_W + noisy_delta_W
+                    final_b = global_b + noisy_delta_b
+                    
+                    client.account_privacy_step()
+                else:
+                    final_W, final_b = new_W, new_b
+
+                local_updates.append({
+                    "cid": cid,
+                    "final_W": final_W,
+                    "final_b": final_b,
+                    "num_samples": len(X_local),
+                    "local_accuracy": evaluate_model(final_W, final_b, X_test, y_test),
+                    "privacy_spent": round(client.dp_engine.privacy_spent, 2) if client.use_dp else 0
+                })
+
+            # Simulate Encrypting Phase
+            await asyncio.sleep(0.5)
+            await ws_manager.broadcast({"type": "client_status", "status": "ENCRYPTING"})
+            
+            # Since HE is slow locally, we use real processing here, but give async context back.
+            # Using asyncio.to_thread to not block the WebSocket event loop
+            for update, client in zip(local_updates, pipeline.clients):
+                info = pipeline.registry_info[update["cid"]]
+                info["counter"] += 1
+
+                model_update = {
+                    "client_id": update["cid"],
+                    "model_params": {"W": update["final_W"], "b": update["final_b"]},
+                    "num_samples": update["num_samples"],
+                }
+
+                # Secure Send (Runs HE encryption which takes time)
+                payload = await asyncio.to_thread(
+                    client.secure_send_update,
+                    model_update,
+                    info["server_kyber_pk"],
+                    info["session_key"],
+                    True, # use_he
+                    info["counter"]
+                )
+                info["session_key"] = payload["session_key"]
+                
+                # Server receives and adds to aggregator
+                await asyncio.to_thread(pipeline.server.receive_update, payload)
+
+                client_logs.append({
+                    "client_id": update["cid"],
+                    "num_samples": update["num_samples"],
+                    "local_accuracy": round(update["local_accuracy"], 4),
+                    "privacy_spent": update["privacy_spent"],
+                })
+
+            # Server Aggregating Phase
+            await ws_manager.broadcast({"type": "client_status", "status": "SENT"})
+            await asyncio.sleep(0.5)
+            await ws_manager.broadcast({"type": "server_aggregating"})
+
+            new_global = await asyncio.to_thread(pipeline.server.finalize_round)
+            accuracy = await asyncio.to_thread(evaluate_model, new_global["W"], new_global["b"], X_test, y_test)
+
+            pipeline.accuracy_history.append({
+                "round": rnd,
+                "accuracy": round(accuracy, 4),
+            })
+
+            # Ciphertext snippet for visual demo
+            sample_weights = new_global["W"].flatten()[:3]
+            he_mgr = pipeline.server.he_manager
+            enc_sample = await asyncio.to_thread(he_mgr.encrypt_vector, sample_weights)
+            ct_snippet = hex(enc_sample[0].ciphertext())[:80] + "..."
+
+            await asyncio.sleep(0.5)
+            await ws_manager.broadcast({
+                "type": "round_complete",
+                "data": {
+                    "round": rnd,
+                    "accuracy": round(accuracy, 4),
+                    "clients": client_logs,
+                    "encrypted_snippet": ct_snippet,
+                    "accuracy_history": pipeline.accuracy_history,
+                }
+            })
+            
+    finally:
+        pipeline.is_training = False
+        await ws_manager.broadcast({"type": "training_done"})
+
 
 @app.get("/api/train/round")
-async def train_one_round():
-    """Execute one REAL federated learning training round."""
+async def train_one_round(background_tasks: BackgroundTasks):
     if not pipeline.initialized:
         raise HTTPException(status_code=503, detail="Pipeline not ready")
+    if pipeline.is_training:
+        raise HTTPException(status_code=400, detail="Training already in progress")
 
-    pipeline.current_round += 1
-    rnd = pipeline.current_round
-
-    global_params = pipeline.server.get_global_model()
-    global_W = global_params["W"]
-    global_b = global_params["b"]
-
-    client_logs = []
-    X_test, y_test = pipeline.test_data
-
-    for i, client in enumerate(pipeline.clients):
-        cid = client.client_id
-        X_local, y_local = pipeline.client_data[i]
-
-        # 1. Local Training
-        new_W, new_b = train_local_model(global_W, global_b, X_local, y_local)
-
-        # 2. Apply Differential Privacy
-        if pipeline.dp_config["enabled"]:
-            # Properly scale DP delta by the number of samples so noise doesn't overpower the signal in multi-round runs
-            raw_delta_W = new_W - global_W
-            raw_delta_b = new_b - global_b
-            
-            # Clip delta
-            norm_W = np.linalg.norm(raw_delta_W)
-            if norm_W > pipeline.dp_config["clipping_norm"]:
-                raw_delta_W = raw_delta_W * (pipeline.dp_config["clipping_norm"] / norm_W)
-                
-            norm_b = np.linalg.norm(raw_delta_b)
-            if norm_b > pipeline.dp_config["clipping_norm"]:
-                raw_delta_b = raw_delta_b * (pipeline.dp_config["clipping_norm"] / norm_b)
-                
-            # Add noise and scale it down by sample size for Federated Averaging
-            client.dp_engine.set_sensitivity(pipeline.dp_config["clipping_norm"])
-            noisy_delta_W = client.dp_engine.add_noise(raw_delta_W, account=False)
-            noisy_delta_b = client.dp_engine.add_noise(raw_delta_b, account=False)
-            
-            final_W = global_W + (noisy_delta_W / len(X_local))
-            final_b = global_b + (noisy_delta_b / len(X_local))
-            
-            client.account_privacy_step()
-        else:
-            final_W, final_b = new_W, new_b
-
-        # 3. Prepare update
-        model_update = {
-            "client_id": cid,
-            "model_params": {"W": final_W, "b": final_b},
-            "num_samples": len(X_local),
-        }
-
-        # 4. Secure send (PQC + HE)
-        info = pipeline.registry_info[cid]
-        info["counter"] += 1
-        payload = client.secure_send_update(
-            model_update,
-            info["server_kyber_pk"],
-            info["session_key"],
-            use_he=True,
-            msg_counter=info["counter"],
-        )
-        info["session_key"] = payload["session_key"]
-        pipeline.server.receive_update(payload)
-
-        client_logs.append({
-            "client_id": cid,
-            "num_samples": len(X_local),
-            "dp_noise_applied": pipeline.dp_config["enabled"],
-            "privacy_spent": round(client.dp_engine.privacy_spent, 2) if client.use_dp else 0,
-            "local_accuracy": round(evaluate_model(final_W, final_b, X_test, y_test), 4),
-            "status": "SENT",
-        })
-
-    # Server aggregation
-    new_global = pipeline.server.finalize_round()
-    X_test, y_test = pipeline.test_data
-    accuracy = evaluate_model(new_global["W"], new_global["b"], X_test, y_test)
-
-    pipeline.accuracy_history.append({
-        "round": rnd,
-        "accuracy": round(accuracy, 4),
-    })
-
-    # Get a ciphertext snippet for display (encrypt a small sample)
-    sample_weights = new_global["W"].flatten()[:3]
-    he_mgr = pipeline.server.he_manager
-    enc_sample = he_mgr.encrypt_vector(sample_weights)
-    ct_snippet = hex(enc_sample[0].ciphertext())[:80] + "..."
-
-    return {
-        "round": rnd,
-        "accuracy": round(accuracy, 4),
-        "clients": client_logs,
-        "encrypted_snippet": ct_snippet,
-        "global_weights_sample": sample_weights.tolist(),
-        "accuracy_history": pipeline.accuracy_history,
-    }
-
+    background_tasks.add_task(_train_loop, 1)
+    return {"msg": "Training round initiated"}
 
 @app.get("/api/train/auto")
-async def train_all_rounds():
-    """Run 10 more training rounds and return full results."""
+async def train_all_rounds(background_tasks: BackgroundTasks):
     if not pipeline.initialized:
         raise HTTPException(status_code=503, detail="Pipeline not ready")
+    if pipeline.is_training:
+        raise HTTPException(status_code=400, detail="Training already in progress")
 
-    results = []
-    target_round = pipeline.current_round + 10
-    while pipeline.current_round < target_round:
-        rnd_result = await train_one_round()
-        results.append(rnd_result)
-
-    return {
-        "msg": "Batch training complete",
-        "total_rounds": len(pipeline.accuracy_history),
-        "final_accuracy": pipeline.accuracy_history[-1]["accuracy"],
-        "accuracy_history": pipeline.accuracy_history,
-    }
-
+    background_tasks.add_task(_train_loop, 10)
+    return {"msg": "Batch training initiated"}
 
 @app.post("/api/privacy/config")
 async def set_privacy_config(config: PrivacyConfig):
     pipeline.dp_config["epsilon"] = config.epsilon
-    # Update epsilon on all client DP engines
     for client in pipeline.clients:
         if client.use_dp:
-            client.dp_engine.epsilon = config.epsilon
-            client.dp_engine.scale = client.dp_engine._calculate_scale()
+            client.set_privacy_budget(config.epsilon)
     return {"epsilon": config.epsilon, "msg": "Privacy budget updated on all clients"}
-
 
 @app.post("/api/attack/simulate")
 async def trigger_attack(req: AttackRequest):
     if req.attack_type == "quantum":
         pipeline.threat_level = "CRITICAL"
-        return {
-            "msg": "QUANTUM WAVEFRONT DETECTED",
-            "action": "ROTATING KEYS",
-            "success": True,
-        }
+        await ws_manager.broadcast({"type": "threat_update", "level": "CRITICAL", "attack": "quantum"})
+        return {"msg": "QUANTUM WAVEFRONT DETECTED", "success": True}
     elif req.attack_type == "mitm":
-        return {
-            "msg": "PACKET INTERCEPTED",
-            "error": "DILITHIUM SIGNATURE MISMATCH",
-            "success": False,
-        }
+        pipeline.threat_level = "HIGH"
+        await ws_manager.broadcast({"type": "threat_update", "level": "HIGH", "attack": "mitm"})
+        return {"msg": "PACKET INTERCEPTED", "success": False}
     return {"msg": "Unknown attack"}
-
 
 if __name__ == "__main__":
     import uvicorn
